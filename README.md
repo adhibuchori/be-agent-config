@@ -62,7 +62,7 @@ mechanism exists. Nothing sits in between, unenforced and assumed.
 | **Guardrail** | `AGENTS.md` | Numbered, citable rules, each naming its enforcement mechanism | 496 lines |
 | **Contract** | `SSOT.md` | Module structure, layer rules, environment variables | 108 lines |
 | **Machine** | `.claude/`, `.mcp.json` | Hooks, reviewer subagent, anti-patterns, rule tiers | 32 files |
-| **Gate** | `.github/` | The definition of "passing", enforced on every pull request | 4 workflows |
+| **Gate** | `.github/` | The definition of "passing", enforced on every pull request | 5 workflows |
 
 Note the shape: the guardrail is three times the size of the router and nearly five times the
 contract. That is correct for a backend and is explained below.
@@ -202,6 +202,7 @@ be-agent-config/
 │
 ├── .github/
 │   ├── workflows/               quality-gate · ci · ci-cd · strip-ai-on-pr
+│   │                            deepseek-review
 │   ├── scripts/                 quality-gate.sh · strip-paths.sh · strip-ai.sh
 │   │                            verify-strip.sh · back-merge-prod.sh
 │   │                            check-comment-blocks.sh · check-comment-style.ts
@@ -311,6 +312,12 @@ target `dev` by default; `prod` is a promotion target, not a place to open work 
 | :-- | :-- | :-- |
 | `GITHUB_TOKEN` | everything | **Do not create this.** GitHub injects it automatically per run. It appears in the workflows but never in your settings |
 | `DOKPLOY_WEBHOOK_URL` | `ci-cd.yml` deploy job | Dokploy → your application → **Deployments → Webhook URL**. Treat it as a credential: anyone holding it can trigger a deploy |
+| `DEEPSEEK_CODE_REVIEW_TOKEN` | `deepseek-review.yml` | An API key from your provider's console. The action accepts any OpenAI-compatible endpoint, so the provider is your choice. **Or delete the workflow** |
+
+> **The review workflow uses `pull_request_target`**, which runs with your repository secrets in
+> scope so it can comment on fork pull requests. **It must never check out the pull request's
+> code.** The shipped copy reads the diff through the API; keep that property if you edit it. On a
+> backend those secrets sit closer to production than on a frontend.
 
 That is the whole list. **Your application's own secrets — database URL, auth secret, payment keys,
 mail keys — do not belong here.** They belong in your deployment platform's environment
@@ -417,6 +424,7 @@ branch protection, secret scanning, and push protection all become free at once.
 □ Branches dev and prod created and pushed          ← nothing runs until this
 □ Default branch set to dev
 □ Secret:  DOKPLOY_WEBHOOK_URL          (or delete the deploy job)
+□ Secret:  DEEPSEEK_CODE_REVIEW_TOKEN   (or delete deepseek-review.yml)
 □ Variable: CI_RUNNER                   (or leave unset — defaults to ubuntu-latest)
 □ Workflow permissions → Read and write (required for ghcr.io)
 □ Dependabot alerts + security updates enabled       ← free everywhere

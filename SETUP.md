@@ -95,7 +95,7 @@ only appear in prose.
 | **Dokploy · Cloudflare · Hostinger** | Deployment, DNS, and VPS control | `.mcp.json` | server table below — delete if not your vendors |
 | **RTK** | Token-reducing shell proxy | **No** — machine-local | [Command wrappers](#command-wrappers--rtk-or-your-own) |
 | **Ponytail** | Context-trimming plugin | **No** — machine-local | [Plugins](#plugins--ponytail-or-your-own) |
-| **DeepSeek Code Review** | AI review comment on pull requests | **No** — port it if you want it | [below](#ai-code-review-on-pull-requests--deepseek-not-shipped-here) |
+| **DeepSeek Code Review** | AI review comment on pull requests | `.github/workflows/` | [below](#ai-code-review-on-pull-requests--deepseek) · README § GitHub configuration |
 
 **react-doctor** and **impeccable** are frontend tools and are deliberately absent — a repository
 with no interface has nothing for either to check. They ship with the frontend and docs-site layers.
@@ -201,23 +201,36 @@ If you use plugins, they go in the same file:
 Keep them out of `.claude/settings.local.json` if the whole team should get them, and in it if the
 choice is yours alone. The `.gitignore` here already excludes the local file.
 
-### AI code review on pull requests — DeepSeek, not shipped here
+### AI code review on pull requests — DeepSeek
 
-The frontend and docs-site layers ship `.github/workflows/deepseek-review.yml`, which posts an AI
-review comment on pull requests into `dev` using
-[`hustcer/deepseek-review`](https://github.com/hustcer/deepseek-review) — despite the name, it
-accepts any OpenAI-compatible endpoint.
+`.github/workflows/deepseek-review.yml` posts an AI review comment on pull requests into `dev`,
+using [`hustcer/deepseek-review`](https://github.com/hustcer/deepseek-review) — which accepts any
+OpenAI-compatible endpoint, so the provider is your choice despite the name.
 
-**This layer does not include it.** Nothing about a backend makes it a bad idea; it simply was not
-part of the repository this was extracted from. Copy the workflow from
-[`fe-agent-config`](https://github.com/adhibuchori/fe-agent-config) and add a
-`DEEPSEEK_CODE_REVIEW_TOKEN` secret if you want it.
+Add a `DEEPSEEK_CODE_REVIEW_TOKEN` secret and it runs. Details in
+**README § GitHub repository configuration**.
 
-> **One constraint carries over, and it matters more here.** That workflow runs under
-> `pull_request_target`, which puts your repository secrets in scope so it can comment on fork pull
-> requests. **It must never check out the pull request's code.** On a backend those secrets sit
-> closer to production than on a frontend, so verify the workflow reads the diff through the API —
-> as the shipped frontend copy does — before you enable it.
+The prompt is written against **this** layer, not a frontend one. It reviews against `AGENTS.md`
+§B layer boundaries, §C the error envelope, §D database rules, §F security, §G code quality, §H
+query performance, and §I runtime hardening — and it excludes generated migrations and the exported
+spec, which `AGENTS.md` forbids hand-editing anyway.
+
+Three things in it worth keeping if you edit it:
+
+**Never add `actions/checkout`.** The workflow runs under `pull_request_target`, which puts your
+repository secrets in scope so it can comment on fork pull requests. Checking out and executing the
+pull request's code under that trigger hands your secrets to anyone who opens one. On a backend
+those secrets sit closer to production than on a frontend. The action reads the diff over the API
+instead.
+
+**`dev` only, and no `synchronize`.** A `dev → prod` diff re-adds the entire AI config the strip
+pipeline removed and exceeds the provider's diff limit. And without `synchronize`, a push does not
+stack another review — re-run on demand by commenting `/ask-deepseek`.
+
+**Do not tell it to skip your security checks unless they actually run on `dev`.** If your quality
+gate only runs on promotion to `prod` while a lighter workflow covers `dev`, then the audit and
+secret scan have *not* run when this review fires. The shipped prompt says so explicitly, and it is
+the difference between a useful review and one that stays quiet about the things that matter.
 
 ---
 
