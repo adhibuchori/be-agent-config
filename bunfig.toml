@@ -1,0 +1,32 @@
+[test]
+# Bun's default test root is the repo root, which would pick up config files
+# and anything else matching *.test.ts outside src/. Scope discovery to the
+# actual source tree.
+root = "src"
+
+# Every external client (the Resend SDK, Redis, Postgres) is replaced here,
+# once, before any test file loads. `mock.module` mutates a registry shared by
+# the whole run, so per-file mocking of the same module was last-write-wins —
+# and the losing file silently got the other's mock. That is how a unit test
+# ended up making a real Resend API call. Steer behaviour from a test via the
+# controls this file exports; do not re-mock those modules per file.
+preload = ["./src/test/preload.ts"]
+
+# Applies only when --coverage is passed (see "test:coverage" in package.json
+# and quality-gate.yaml) — plain `bun test` stays fast and uninstrumented.
+# Scoped to modules/lib/middlewares: composition-only glue (app.ts, index.ts,
+# env.ts, db/**, the raw logger/redis clients) is intentionally uncovered —
+# it has no branches worth a unit test, and db/lib/redis get real exercise
+# from integration tests instead. Revisit this list as modules grow.
+coverageThreshold = 0.8
+coverageSkipTestFiles = true
+coveragePathIgnorePatterns = [
+  "src/index.ts",
+  "src/app.ts",
+  "src/env.ts",
+  "src/db/**",
+  "src/lib/logger.ts",
+  "src/lib/redis.ts",
+  "src/lib/factory.ts",
+  "src/test/**",
+]

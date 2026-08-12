@@ -1,0 +1,186 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "plugins": ["typescript", "unicorn", "oxc", "import", "promise", "node"],
+  "categories": {
+    "correctness": "error",
+    "suspicious": "error",
+    "perf": "error"
+  },
+  "rules": {
+    "no-console": "error",
+    "import/no-cycle": "error",
+    "max-lines": ["error", { "max": 200, "skipBlankLines": true, "skipComments": true }],
+    "max-depth": ["error", 4],
+    "promise/prefer-await-to-then": "error",
+    "unicorn/prefer-node-protocol": "error",
+    "typescript/no-explicit-any": "error",
+    // AGENTS.md §H Rule 31/36 — a query in a loop is the N+1 signature. Batch
+    // with inArray()/a join, or run independent work through Promise.all.
+    "no-await-in-loop": "error",
+    // AGENTS.md §H Rule 37 — Drizzle query builders are thenables, so a
+    // dropped `await` type-checks and silently never runs. These three are
+    // type-aware: they only fire under `oxlint --type-aware` (see the "lint"
+    // script), which needs the oxlint-tsgolint devDependency.
+    // checkThenables is the whole point here: it defaults to false, and
+    // without it a dropped `await` on a Drizzle query builder — a thenable,
+    // not a Promise — passes silently. Verified against a probe file.
+    "typescript/no-floating-promises": ["error", { "checkThenables": true }],
+    "typescript/no-misused-promises": "error",
+    "typescript/await-thenable": "error",
+    // AGENTS.md §C Rule 11 — every thrown value is a DomainError subclass or
+    // an HTTPException; `throw "string"` bypasses the whole error contract.
+    "typescript/only-throw-error": "error",
+    // AGENTS.md §F Rule 22 — src/env.ts is the only file that reads raw env.
+    // Overridden back off for env.ts itself below.
+    "no-restricted-properties": [
+      "error",
+      {
+        "object": "process",
+        "property": "env",
+        "message": "Read validated values from src/env.ts instead. It is the only file allowed to touch process.env (AGENTS.md §F Rule 22)."
+      }
+    ]
+  },
+  "overrides": [
+    // Bootstraps env vars before the logger exists — console is the only
+    // option here, and env.ts is by definition the file that reads process.env.
+    {
+      "files": ["src/env.ts", "src/db/migrate.ts"],
+      "rules": {
+        "no-console": "off",
+        "no-restricted-properties": "off"
+      }
+    },
+    // The integration-test gate must answer before env.ts validates anything:
+    // importing env.ts here would make every unit test require DATABASE_URL.
+    {
+      "files": ["src/test/config.ts"],
+      "rules": {
+        "no-restricted-properties": "off"
+      }
+    },
+    // `Hook<unknown, any, any, …>` is the signature @hono/zod-openapi exports
+    // for defaultHook, and problem.ts must narrow a plain number to
+    // ContentfulStatusCode to hand it to c.body().
+    {
+      "files": ["src/lib/problem.ts"],
+      "rules": {
+        "typescript/no-explicit-any": "off",
+        "typescript/no-unsafe-type-assertion": "off"
+      }
+    },
+    // The pass-through constructors here are deliberate — see the class-level
+    // comment in errors.ts on Bun's coverage attribution for field overrides.
+    {
+      "files": ["src/lib/errors.ts"],
+      "rules": {
+        "no-useless-constructor": "off"
+      }
+    },
+    // Placeholder module — no tables exist yet (SSOT.md §Database).
+    {
+      "files": ["src/db/schema.ts"],
+      "rules": {
+        "unicorn/require-module-specifiers": "off"
+      }
+    },
+    // Tests build mocks by asserting plain objects into Hono/Drizzle types and
+    // await deliberately-synchronous fakes. Both are how a mock is written, not
+    // the production defects these rules exist to catch — §H Rule 37 stays
+    // fully armed everywhere real queries run.
+    {
+      "files": ["src/**/__tests__/**"],
+      "rules": {
+        "no-await-in-loop": "off",
+        "typescript/no-explicit-any": "off",
+        "typescript/no-unsafe-type-assertion": "off",
+        "typescript/await-thenable": "off",
+        "unicorn/consistent-function-scoping": "off"
+      }
+    },
+    // AGENTS.md §B Rule 7 — services are pure business logic and never see a
+    // Hono Context. Dependencies arrive as default parameters instead.
+    {
+      "files": ["src/modules/*/*.service.ts"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "group": ["hono", "hono/*", "@hono/*"],
+                "message": "Services must not import Hono — they never touch Context. HTTP concerns belong in the handler (AGENTS.md §B Rule 7)."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    // A module may only be reached through its index.ts barrel from outside itself.
+    // `../*/[!index]*` matches a two-level-or-more path into another module's
+    // internals; a same-module relative import (`../sibling.ts`, `./sibling.ts`)
+    // never has that second `/` segment, so it is unaffected by this rule.
+    {
+      "files": ["src/modules/*/**"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "group": ["../*/[!index]*"],
+                "message": "Cross-module imports must go through the target module's index.ts barrel — never its internals (*.service.ts, *.repository.ts, etc)."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    // Handlers are thin HTTP glue. DB access belongs in the service (or
+    // repository on escalation) — never in a handler.
+    {
+      "files": ["src/modules/*/*.handler.ts"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "paths": [
+              {
+                "name": "drizzle-orm",
+                "message": "Handlers must not import drizzle-orm directly. Call the service — it owns DB access."
+              },
+              {
+                "name": "postgres",
+                "message": "Handlers must not import the postgres client directly. Call the service — it owns DB access."
+              }
+            ],
+            "patterns": [
+              {
+                "group": ["**/db/**", "**/db"],
+                "message": "Handlers must not import src/db directly. Call the service — it owns DB access."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    // lib/ and middlewares/ are infrastructure that modules depend on. The
+    // dependency direction never reverses.
+    {
+      "files": ["src/lib/**", "src/middlewares/**"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "group": ["**/modules/**"],
+                "message": "src/lib/** and src/middlewares/** must not import from src/modules/** — modules depend on lib/middlewares, never the reverse."
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

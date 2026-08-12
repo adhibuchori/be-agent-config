@@ -1,0 +1,19 @@
+# Requests reviewers automatically. Without branch protection this is a prompt, not
+# a gate. Later rules win, so the narrow entries below override the catch-all.
+
+*                                @your-github-handle
+
+# Anything that decides what reaches production deserves a deliberate look.
+/.github/workflows/              @your-github-handle
+/.github/dependabot.yml          @your-github-handle
+/.gitleaks.toml                  @your-github-handle
+/Dockerfile                      @your-github-handle
+
+# The composition root, the env schema, and the one real connection pool: a
+# mistake in any of these breaks startup or serializes every request.
+/src/app.ts                      @your-github-handle
+/src/env.ts                      @your-github-handle
+/src/db/index.ts                 @your-github-handle
+
+# drizzle-kit generated — never hand-edited.
+/src/db/migrations/              @your-github-handle

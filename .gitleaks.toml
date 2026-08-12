@@ -1,0 +1,36 @@
+# Extends gitleaks' built-in ruleset rather than replacing it — every default
+# rule stays active, and only the specific placeholders below are exempted.
+[extend]
+useDefault = true
+
+[allowlist]
+description = """
+Placeholder values that gitleaks' generic-api-key rule flags because they sit
+next to a name like RESEND_API_KEY, but which are not credentials.
+
+Each entry is narrow on purpose: a broad path or rule exclusion would also hide
+a real key committed to the same file later. If you add an entry here, state
+what the value is and why it cannot be a secret.
+
+Replace the examples below with your own repo's placeholders — these are the
+ones a Bun + Hono backend accumulates, and they are here to show the shape.
+"""
+regexTarget = "match"
+regexes = [
+  # A stub-mode sentinel: the value that TURNS OFF real sending in development.
+  # If it ever reached the provider it would simply be rejected.
+  '''re_123456789abcdef''',
+  # scripts/export-openapi.ts — env validation runs on import, so the spec
+  # export must satisfy the schema before importing the app. Every value in
+  # that map is the literal word "placeholder" padded to the required length.
+  '''placeholder-32-characters-long-ok''',
+  '''xnd_development_placeholder''',
+]
+
+paths = [
+  # Committed example env files hold placeholder values by definition. The
+  # gate's separate "Check .env Not Committed" step is what stops a real .env
+  # from being committed — that check is not weakened by this.
+  '''\.env\.example$''',
+  '''\.env\.[a-z]+\.example$''',
+]

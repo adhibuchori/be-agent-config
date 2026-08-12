@@ -1,14 +1,20 @@
 # Backend Testing Conventions
 
-> ⚠️ **Nothing described here exists in this repo yet.** There is no `test` script, no
-> `bunfig.toml`, no `__tests__/` directory, and no `src/test/config.ts`. This is the shape to
-> build toward — the fleet convention, already live in `<sibling-backend-repo>` — so
-> that the suite lands in one recognisable form instead of three. `AGENTS.md` §E records this
-> as a tracked deviation.
+> `bunfig.toml` ships in this config layer and already wires `preload`. Copy
+> `.claude/test-preload.example.ts` to `src/test/preload.ts` and delete the clients your repo
+> does not have. The quality gate runs `bun run test:coverage`; add the three `test` scripts to
+> `package.json` (`bun test src`, `bun test src --coverage`, and the `RUN_INTEGRATION_TESTS=1`
+> variant).
 >
-> Bootstrapping order when someone picks this up: add `bunfig.toml` + the `test` scripts, then
-> `src/test/config.ts`, then cover `modules/meta` (already written for injection) and
-> `courses.repository` first.
+> **Bun enforces `coverageThreshold` per file, not in aggregate.** An 84% overall figure still
+> fails the gate if one handler sits at 13%.
+>
+> **One rule that is not obvious and cost a real network call to learn:** every external client
+> is replaced once in `src/test/preload.ts`, never per test file. `mock.module` mutates a
+> registry shared by the whole run, so two files mocking the same module is last-write-wins and
+> the loser silently inherits the other's mock. Steer through the controls `preload.ts` exports
+> (`resendControl`, `redisControl`, `dbControl`, `authControl`, `xenditControl`) and reset with
+> `resetExternalMocks()` in `beforeEach`.
 
 Two tiers, both on Bun's built-in runner (`bunfig.toml` scopes discovery to `src/`). See
 `AGENTS.md` §E for the enforced, numbered rules — this file is the deeper reference.

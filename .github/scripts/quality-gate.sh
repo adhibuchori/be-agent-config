@@ -44,6 +44,10 @@ run "Type Check" bun run type-check
 run "Comment Style Check" bun run .github/scripts/check-comment-style.ts
 run "Comment Block Length Check" bash .github/scripts/check-comment-blocks.sh
 
+# Unit tier only: src/test/preload.ts replaces every external client, so this
+# needs the env vars set but no live server. See quality-gate.yml.
+run "Unit Tests (coverage)" bun run test:coverage
+
 # A stale copy under .claude/commands/ still reads as valid, and INDEX.md is what an agent
 # consults to discover the commands at all. Skipped on prod, where the strip removed the source.
 step "Workflow Mirror Drift Check"
@@ -134,14 +138,19 @@ scan "Dangerous JS APIs Check" '\beval\s*\(|new\s+Function\s*\(' "src scripts"
 scan "Unsafe React Patterns Check" 'dangerouslySetInnerHTML|__html' "src scripts"
 scan "URL Scheme Injection Check" '(javascript:|data:text/html|data:application/)' "src scripts"
 
-step "Secret Scan"
-if git diff "$BASE"...HEAD | grep -iEq "(api[_-]?key|secret|password|token|bearer|private[_-]?key)["']?[[:space:]]*[:=][[:space:]]*["'][^"']{6,}"; then
-  echo "::error::Potential secrets detected"
+step "Raw SQL / Interpolation Audit"
+if git diff "$BASE"...HEAD -- src | grep -E "^\+" | grep -E 'sql`[^`]*\$\{' | grep -v '\.repository\.ts'; then
+  echo "::error::Interpolated raw SQL found outside a *.repository.ts file"
   failed=$((failed + 1))
 else
   echo "Clean"
 fi
-# <frontend-repo>'s orval client reads openapi.json.
+
+step "Secret Scan (gitleaks)"
+GITLEAKS_VERSION=8.30.1
+GITLEAKS_SHA256=551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+GL=""
+
 step "OpenAPI Spec Drift Check"
 bun run spec:export
 if ! git diff --exit-code openapi.json; then
@@ -150,6 +159,17 @@ if ! git diff --exit-code openapi.json; then
 fi
 
 run "Production Build" bun run build
+
+# ── Security — source map leak check (dist/ only) ──
+step "Check Source Maps Leak"
+MAPS=$(find dist -name "*.map" 2>/dev/null | head -5)
+if [ -n "$MAPS" ]; then
+  echo "::error::Source maps leaked in the build output (dist/)"
+  echo "$MAPS"
+  failed=$((failed + 1))
+else
+  echo "Clean"
+fi
 
 # ── Summary ──
 printf '\n\033[1m── Summary\033[0m\n'
