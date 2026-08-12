@@ -10,7 +10,7 @@ production branches.
 
 Not advice about writing rules. The rules themselves, in the form that executes.
 
-[Setup](SETUP.md) · [Rationale](docs/RATIONALE.md) · [Frontend](https://github.com/adhibuchori/fe-agent-config) · [Docs site](https://github.com/adhibuchori/docs-agent-config)
+[Setup](SETUP.md) · [Rationale](docs/RATIONALE.md) · [Frontend](https://github.com/adhibuchori/fe-agent-config) · [Docs site](https://github.com/adhibuchori/docs-agent-config) · [AI/Python](https://github.com/adhibuchori/ai-agent-config)
 
 </div>
 
