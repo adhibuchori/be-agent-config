@@ -25,6 +25,7 @@ Not advice about writing rules. The rules themselves, in the form that executes.
 - [Repository structure](#repository-structure)
 - [Quick start](#quick-start)
 - [What is deliberately excluded](#what-is-deliberately-excluded)
+- [GitHub repository configuration](#github-repository-configuration)
 - [Requirements](#requirements)
 - [Adapting it to your stack](#adapting-it-to-your-stack)
 - [Design decisions worth knowing before you edit](#design-decisions-worth-knowing-before-you-edit)
@@ -253,6 +254,128 @@ interface, so the directory is absent rather than empty.
 In a backend repository this is frequently dead weight: a dozen files kept in sync for a reader who
 does not exist. Deleting it is a legitimate choice, covered in `SETUP.md` §6. Decide knowingly
 rather than inheriting it.
+
+---
+
+## GitHub repository configuration
+
+Everything the workflows need, in the order you should set it up. **Nothing here is required to
+clone and read the layer** — this is for when you wire the gate into a real repository.
+
+The list is short: a backend repository needs **one** secret. Skip to
+[the checklist](#checklist) if you just want it.
+
+### Step 0 — Create the branches (this is what turns the workflows on)
+
+```bash
+git checkout -b dev  && git push -u origin dev
+git checkout -b prod && git push -u origin prod
+```
+
+Until these exist, **no workflow can trigger** — every one of them is scoped to `dev` or `prod`.
+That is why cloning this repo costs zero Actions minutes.
+
+Then set `dev` as the default branch: **Settings → General → Default branch**. Pull requests should
+target `dev` by default; `prod` is a promotion target, not a place to open work against.
+
+### Step 1 — Repository secrets
+
+**Settings → Secrets and variables → Actions → New repository secret**
+
+| Secret | Required for | How to get it |
+| :-- | :-- | :-- |
+| `GITHUB_TOKEN` | everything | **Do not create this.** GitHub injects it automatically per run. It appears in the workflows but never in your settings |
+| `DOKPLOY_WEBHOOK_URL` | `ci-cd.yml` deploy job | Dokploy → your application → **Deployments → Webhook URL**. Treat it as a credential: anyone holding it can trigger a deploy |
+
+That is the whole list. **Your application's own secrets — database URL, auth secret, payment keys,
+mail keys — do not belong here.** They belong in your deployment platform's environment
+configuration. Adding them as Actions secrets puts production credentials in reach of every
+workflow run, including any a contributor can trigger, for no benefit: the gate never connects to a
+real database.
+
+> `SSOT.md` § Env Variables lists what your application needs at runtime. That is a different list
+> with a different home, and conflating the two is the most common way production credentials end
+> up somewhere they should not be.
+
+### Step 2 — Repository variables (not secrets)
+
+**Settings → Secrets and variables → Actions → Variables tab**
+
+| Variable | Purpose |
+| :-- | :-- |
+| `CI_RUNNER` | Runner label. Every job reads `${{ vars.CI_RUNNER \|\| 'ubuntu-latest' }}`, so **leaving it unset is valid** and gives you GitHub's hosted runners. Set it only to point at a self-hosted or third-party runner |
+
+Variables are visible in logs; secrets are masked. A runner label is not sensitive, which is why it
+is a variable.
+
+### Step 3 — Container registry
+
+`ci-cd.yml` pushes to **GitHub Container Registry** (`ghcr.io`) and needs no secret — it
+authenticates with the injected `GITHUB_TOKEN`. What it does need:
+
+**Settings → Actions → General → Workflow permissions** → **Read and write permissions**.
+
+The workflow also declares `packages: write` at job level. Both are required; the repository-level
+setting is a ceiling the job-level declaration cannot exceed.
+
+After the first successful push, the package appears under your profile's **Packages** tab, private
+by default. Make it public there if your deploy target pulls it anonymously.
+
+### Step 4 — Branch protection
+
+Not required for the workflows to run, but it is what converts the gate from advice into
+enforcement. **Settings → Rules → Rulesets → New branch ruleset**, applied to `dev` and `prod`:
+
+| Setting | Value | Why |
+| :-- | :-- | :-- |
+| Require a pull request before merging | on | The gate triggers on `pull_request`. Direct pushes bypass it entirely |
+| Require status checks to pass | on, select **Quality Gate** | Without this the gate reports and merges anyway |
+| Require branches to be up to date | on | Otherwise the gate passes against a stale base |
+| Block force pushes | on | The strip pipeline's history is not recoverable from a force push |
+
+**On a backend, make the spec-drift check a required status too.** It is the only thing standing
+between a changed route and a silently stale contract that other repositories generate their
+clients from. A drift check that can be merged past is not a contract.
+
+### Step 5 — Dependabot and secret scanning
+
+**Settings → Code security**, and both are worth more here than on a frontend:
+
+| Feature | Why it matters more on a backend |
+| :-- | :-- |
+| Dependabot alerts + security updates | The dependency surface includes your ORM, HTTP framework, and auth library. An advisory here is reachable from the internet |
+| Secret scanning | Backend repositories are where a real connection string most plausibly gets pasted into a fixture or a comment |
+| Push protection | Blocks a commit containing a recognised credential **before** it reaches the remote. The gate's own gitleaks step runs after the push and can only tell you to rotate |
+
+Dependabot's pull requests target `dev`, so they run the full gate like any other change.
+
+> **When an audit fires, resist the ignore flag.** Check where the advisories come from first —
+> they frequently all arrive through one parent dependency. Force the transitive package to a
+> patched release via `overrides`, then delete the flags. A flag left behind after the problem is
+> fixed will hide the next report for a different vulnerability.
+
+### Checklist
+
+```
+□ Branches dev and prod created and pushed          ← nothing runs until this
+□ Default branch set to dev
+□ Secret:  DOKPLOY_WEBHOOK_URL          (or delete the deploy job)
+□ Variable: CI_RUNNER                   (or leave unset — defaults to ubuntu-latest)
+□ Workflow permissions → Read and write (required for ghcr.io)
+□ Branch ruleset on dev and prod; Quality Gate AND spec drift required
+□ Dependabot alerts + security updates enabled
+□ Secret scanning + push protection enabled
+□ CODEOWNERS updated from @your-github-handle
+□ Application runtime secrets are in your deploy platform, NOT in Actions secrets
+```
+
+### Verifying it without burning minutes
+
+Open one throwaway pull request into `dev` with a whitespace change. That runs the full gate once
+and tells you every step's status in a single execution.
+
+Do not test the deploy path this way — merging to `prod` triggers a real deploy and the strip
+pipeline. Test that only when the branch actually holds what you want deployed.
 
 ---
 
