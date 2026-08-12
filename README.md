@@ -252,7 +252,7 @@ interface, so the directory is absent rather than empty.
 
 `.agent/workflows/` **is** included — a command mirror for a second tool that reads from that path.
 In a backend repository this is frequently dead weight: a dozen files kept in sync for a reader who
-does not exist. Deleting it is a legitimate choice, covered in `SETUP.md` §6. Decide knowingly
+does not exist. Deleting it is a legitimate choice, covered in `SETUP.md` §7. Decide knowingly
 rather than inheriting it.
 
 ---
@@ -446,7 +446,7 @@ Nothing is mandatory. Every piece degrades to "delete this file" rather than bre
 | For | You need |
 | :-- | :-- |
 | Hooks, commands, the subagent | An agent runtime that reads `.claude/` and `AGENTS.md` |
-| The quality gate | GitHub Actions, plus package scripts named in `SETUP.md` §5 |
+| The quality gate | GitHub Actions, plus package scripts named in `SETUP.md` §6 |
 | Spec drift check | A committed API spec and a script that regenerates it |
 | Migration guard | A migrations directory — adjust the path pattern to match yours |
 | MCP servers | The env vars named in `.mcp.json`; delete the servers you do not use |
@@ -495,8 +495,8 @@ No. Every workflow triggers on `dev` or `prod`, and this repo has only `main`. N
 and no secrets are needed. They activate when you create those branches in your own repo.
 
 **Do I have to adopt all of it?**
-No. `SETUP.md` §1–§5 is the useful minimum: placeholders, the compliance table, hooks, and the
-gate. The strip pipeline is optional and comes last because it is the only part that deletes files.
+No. `SETUP.md` §1–§6 is the useful minimum: placeholders, the compliance table, tooling, hooks,
+and the gate. The strip pipeline is optional and comes last because it is the only part that deletes files.
 
 **Why is `AGENTS.md` so much longer than the frontend one?**
 Because security and data-access rules have to be spelled out, and backend architecture is uniform
