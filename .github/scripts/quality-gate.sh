@@ -151,6 +151,31 @@ GITLEAKS_VERSION=8.30.1
 GITLEAKS_SHA256=551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
 GL=""
 
+# The pinned build and checksum, exactly as CI fetches them. Any other binary is
+# a different scan, so elsewhere it falls back to whatever is installed.
+if [ "$(uname -s)" = "Linux" ] && [ "$(uname -m)" = "x86_64" ]; then
+  GL_URL="https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+  if curl -sSfL -o gitleaks.tar.gz "$GL_URL"     && echo "${GITLEAKS_SHA256}  gitleaks.tar.gz" | sha256sum -c -     && tar xzf gitleaks.tar.gz gitleaks; then
+    GL=./gitleaks
+  else
+    echo "::error::could not fetch or verify the pinned gitleaks build"
+    failed=$((failed + 1))
+  fi
+elif command -v gitleaks >/dev/null 2>&1; then
+  GL=gitleaks
+fi
+
+if [ -n "$GL" ]; then
+  if ! "$GL" git . --no-banner --redact; then
+    echo "::error::gitleaks found findings"
+    failed=$((failed + 1))
+  fi
+elif [ "$failed" -eq 0 ]; then
+  echo "gitleaks not installed — brew install gitleaks"
+  skip "Secret Scan (gitleaks)" "no pinned build for $(uname -sm), none on PATH"
+fi
+rm -f gitleaks gitleaks.tar.gz
+# The generated API client downstream reads openapi.json.
 step "OpenAPI Spec Drift Check"
 bun run spec:export
 if ! git diff --exit-code openapi.json; then

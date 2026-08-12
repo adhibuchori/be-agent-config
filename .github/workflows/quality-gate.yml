@@ -19,6 +19,16 @@ jobs:
     runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 20
 
+    # src/env.ts validates on import and exits, so the unit tier needs these set
+    # even though it never dials any of them — src/test/preload.ts replaces every
+    # external client. Hence dummy values and deliberately no `services:` block.
+    # Mirror your own src/env.ts schema here; a var missing from this block but
+    # exported in your shell passes locally and fails only in CI.
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/app
+      REDIS_URL: redis://localhost:6379
+      RESEND_API_KEY: dummy-value-not-used-by-the-unit-tier
+
     steps:
       - name: Checkout Code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
