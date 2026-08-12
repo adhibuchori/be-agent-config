@@ -1,6 +1,6 @@
 # Code Review Standards
 
-The `be-reviewer` agent (`.claude/agents/be-reviewer.md`) checks the enforced `AGENTS.md` rules
+The `agents-reviewer` agent (`.claude/agents/agents-reviewer.md`) checks the enforced `AGENTS.md` rules
 mechanically. This file is the human checklist around it.
 
 ## When to Review

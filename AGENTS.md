@@ -64,9 +64,9 @@ endpoint reporting a failed dependency inside a 200 response is the kind of thin
 | # | Rule | Enforcement |
 |---|------|-------------|
 | 1 | **Read first.** Identify every file a change touches before writing code. State what will change and why if the approach isn't obvious. This repo's commit convention is `type: description` (no scope) — deliberately different from the FE fleet's `type(scope): subject`, because that FE format is itself inconsistent across its own docs (see the refactor plan); picking one clean format here rather than propagating the ambiguity. | advisory |
-| 2 | **Simplicity first.** Minimal change that achieves the goal. Do not add abstractions — a repository layer, a shared test helper, a new lib module — that nothing currently needs. | advisory / `be-reviewer` |
-| 3 | **Surgical changes.** Do not touch files outside the task's scope, including reformatting code you didn't otherwise change. | advisory / `be-reviewer` |
-| 4 | **Service layer is mandatory. Repository is added only on escalation.** Default shape is `handler → service → db`. Add `<module>.repository.ts` only when at least one holds: the service coordinates multiple queries/tables · it needs a transaction · it holds policy worth unit-testing without a DB · the same query bundle is reused elsewhere · direct Drizzle access is hurting readability. Do not add a repository mechanically for single-query CRUD. | advisory / `be-reviewer` |
+| 2 | **Simplicity first.** Minimal change that achieves the goal. Do not add abstractions — a repository layer, a shared test helper, a new lib module — that nothing currently needs. | advisory / `agents-reviewer` |
+| 3 | **Surgical changes.** Do not touch files outside the task's scope, including reformatting code you didn't otherwise change. | advisory / `agents-reviewer` |
+| 4 | **Service layer is mandatory. Repository is added only on escalation.** Default shape is `handler → service → db`. Add `<module>.repository.ts` only when at least one holds: the service coordinates multiple queries/tables · it needs a transaction · it holds policy worth unit-testing without a DB · the same query bundle is reused elsewhere · direct Drizzle access is hurting readability. Do not add a repository mechanically for single-query CRUD. | advisory / `agents-reviewer` |
 
 ---
 
@@ -128,7 +128,7 @@ export async function getHealthReport(
 }
 ```
 
-Enforcement: advisory / `be-reviewer`.
+Enforcement: advisory / `agents-reviewer`.
 
 **Rule 8 — Cross-module imports go through `index.ts` only**
 
@@ -151,7 +151,7 @@ Enforcement: `.oxlintrc.json` — `src/lib/**` and `src/middlewares/**` forbid `
 
 **Rule 10 — Repository escalation criteria** — see Rule 4. Do not pre-build a repository
 "in case it's needed later" (YAGNI) — add it the commit a real escalation condition is met.
-Enforcement: advisory / `be-reviewer`.
+Enforcement: advisory / `agents-reviewer`.
 
 ---
 
@@ -168,7 +168,7 @@ Enforcement: advisory / `be-reviewer`.
 hand-roll a JSON error body (`c.json({ error: "..." }, 400)`) in a handler or service — that's
 exactly the four-envelope drift this contract replaced. `src/lib/problem.ts`'s
 `handleAppError` (wired via `app.onError` in `src/app.ts`) is the only place a thrown error
-becomes a response. Enforcement: advisory / `be-reviewer`.
+becomes a response. Enforcement: advisory / `agents-reviewer`.
 
 **Rule 12 — `userMessage` is client-safe. The second constructor argument (`internalDetail`)
 is logs-only and must never contain IDs, stack traces, or internals that could help an
@@ -187,7 +187,7 @@ export class HealthCheckFailedError extends ServiceUnavailableError {
 }
 ```
 
-Enforcement: advisory / `be-reviewer`.
+Enforcement: advisory / `agents-reviewer`.
 
 **Rule 13 — Every route declares the error responses its service can actually throw**, via
 `errorResponses(...)` from `src/lib/problem.ts`, plus `422` (the shared `defaultHook` can fire
@@ -214,7 +214,7 @@ Enforcement: `.claude/hooks/migration-guard.sh` (blocking) + `scripts/check-migr
 **Rule 17 — `src/db/index.ts` holds the one real connection pool for the running app.**
 `{ max: 1 }` belongs only in `src/db/migrate.ts`, where a migration run genuinely needs a
 single serialized connection. See `.claude/anti-patterns/postgres-max-1-pool.md`. Enforcement:
-advisory / `be-reviewer`.
+advisory / `agents-reviewer`.
 
 **Rule 18 — Transaction boundaries live in the repository** (`db.transaction(async (tx) => ...)`)
 when one exists — never spread a multi-statement transaction across a service function.
@@ -235,7 +235,7 @@ Enforcement: advisory.
 `__tests__/helpers.ts`** exposing mock builders (`createXMock(overrides)`) before the module is
 considered done. Keep helpers module-local until duplication across modules proves a shared
 helper is worth it (see `src/modules/meta/__tests__/helpers.ts`). Enforcement: advisory /
-`be-reviewer`.
+`agents-reviewer`.
 
 **Rule 20 — Unit tests (`bun test src`) never touch real Postgres or Redis.** Anything that
 needs a live dependency is a `*.integration.test.ts` file gated by
@@ -251,7 +251,7 @@ Enforcement: CI runs the two tiers as separate jobs (`bun run test` vs.
 
 **Rule 21 — Route-level tests import the real `handleAppError`** from `src/lib/problem.ts`
 (via `app.ts`), never redeclare an inline error mapper — otherwise the test can pass while the
-real mapping has silently drifted. Enforcement: advisory / `be-reviewer`.
+real mapping has silently drifted. Enforcement: advisory / `agents-reviewer`.
 
 ---
 
@@ -267,7 +267,7 @@ which run before the logger can exist).
 **Rule 24 — In `rate-limit.middleware.ts`, `await next()` must never sit inside the Redis
 try/catch.** Only the Redis bookkeeping is allowed to fail open; the request's own
 allow/deny decision must be resolved before `next()` runs, exactly once. See
-`.claude/anti-patterns/rate-limit-double-next.md`. Enforcement: advisory / `be-reviewer`.
+`.claude/anti-patterns/rate-limit-double-next.md`. Enforcement: advisory / `agents-reviewer`.
 
 **Rule 25 — No `.env` file or secret is ever committed.** Enforcement: `quality-gate.yaml`
 secret scan (gitleaks) + `.env`-committed check, both diffing the actual PR range.
@@ -281,10 +281,10 @@ service, repository, sub-handler — before it grows past this. Enforcement: `.o
 `max-lines: ["error", { max: 200 }]`.
 
 **Rule 27 — No `oxlint-disable` comments.** Fix the underlying issue instead of suppressing
-the lint. Enforcement: advisory / `be-reviewer`.
+the lint. Enforcement: advisory / `agents-reviewer`.
 
 **Rule 28 — Handlers stay ≤15 lines.** If a handler grows past that, the excess is business
-logic that belongs in the service. Enforcement: advisory / `be-reviewer`.
+logic that belongs in the service. Enforcement: advisory / `agents-reviewer`.
 
 ---
 
@@ -310,13 +310,13 @@ const page = await db
 
 `.offset()` is allowed only for an admin table that is known to stay small and genuinely needs
 jump-to-page; when you use it, write the row ceiling you are assuming in a comment.
-Enforcement: advisory / `be-reviewer`.
+Enforcement: advisory / `agents-reviewer`.
 
 **Rule 30 — Select columns explicitly.** `db.select({ id: t.id, name: t.name })`, never a bare
 `db.select()` on a table carrying `text`, `jsonb`, or array columns — a bare select ships every
 byte of those columns over the wire on every request. In the relational query builder use
 `columns: {...}`, which Drizzle applies as a partial select at the query level (no extra data
-leaves Postgres). Enforcement: advisory / `be-reviewer`.
+leaves Postgres). Enforcement: advisory / `agents-reviewer`.
 
 **Rule 31 — No query inside a loop (N+1).** Batch with `inArray()`, a join, or the relational
 query builder's `with:` — Drizzle emits that as a single statement using `LEFT JOIN LATERAL` +
@@ -336,7 +336,7 @@ Enforcement: `.oxlintrc.json` `no-await-in-loop: error`.
 query.** Foreign key columns are always indexed — Postgres creates an index for a PRIMARY KEY
 but **not** for a `REFERENCES` column. Composite index column order is equality columns first,
 then the range/sort column. Use a partial index when the query always carries the same constant
-predicate. Enforcement: `scripts/check-index-coverage.sh` (CI) + `be-reviewer`.
+predicate. Enforcement: `scripts/check-index-coverage.sh` (CI) + `agents-reviewer`.
 
 **Rule 33 — A query against a table expected to exceed ~100k rows ships with `EXPLAIN (ANALYZE,
 BUFFERS)` output in the PR.** A `Seq Scan` on a request-path query is a blocker unless the PR
@@ -353,11 +353,11 @@ outright — that deployment requires `DB_PREPARE=false` (Rule 38). Enforcement:
 trip, no non-DB `await` inside `db.transaction()` — every one of those holds a connection and a
 row lock open for the duration of something the database cannot see. The upper bound is
 enforced by `statement_timeout` and `idle_in_transaction_session_timeout` on the pool (Rule 38).
-Enforcement: advisory / `be-reviewer`.
+Enforcement: advisory / `agents-reviewer`.
 
 **Rule 36 — Writes are batched.** One `db.insert(t).values([...])` for N rows, never N inserts.
 Upsert via `.onConflictDoUpdate()` — a select-then-insert is a race, not an upsert.
-Enforcement: `no-await-in-loop` + `be-reviewer`.
+Enforcement: `no-await-in-loop` + `agents-reviewer`.
 
 **Rule 37 — Every Drizzle query is awaited.** Drizzle's query builders are *thenables*: a
 missing `await` returns a builder object that type-checks fine and silently never runs. This is
@@ -385,7 +385,7 @@ argument.
 
 **Rule 40 — Every request carries a correlation ID.** `requestId()` is the first middleware
 registered; the ID goes into every Pino line and out on the `X-Request-Id` response header, so
-a client-reported failure can be traced to its log lines. Enforcement: advisory / `be-reviewer`.
+a client-reported failure can be traced to its log lines. Enforcement: advisory / `agents-reviewer`.
 
 **Rule 41 — `/api/*` has a request budget: `bodyLimit`, `timeout`, and `secureHeaders`.** The
 middleware order in `src/app.ts` is part of the contract, not a preference — it is documented

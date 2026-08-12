@@ -7,7 +7,7 @@ description: Review staged or branch changes against this repo's backend rules.
 
 # /review — Backend Code Review
 
-Delegate the detailed pass to `.claude/agents/be-reviewer.md`; this command frames what it looks
+Delegate the detailed pass to `.claude/agents/agents-reviewer.md`; this command frames what it looks
 at and in what order.
 
 ## Step 1: Scope

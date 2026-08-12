@@ -9,7 +9,7 @@
 #
 # Deliberately a heuristic: it reads the Drizzle schema source, not the
 # database. It cannot see an index declared in a different file, and it does
-# not judge composite index column order — that is the be-reviewer agent's job.
+# not judge composite index column order — that is the agents-reviewer agent's job.
 # It exists to catch the one mistake that is both common and expensive.
 set -euo pipefail
 

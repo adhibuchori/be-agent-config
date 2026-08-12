@@ -1,5 +1,5 @@
 ---
-name: be-reviewer
+name: agents-reviewer
 description: Validates a change against this repo's AGENTS.md — layer boundaries, error contract, DB access, and code quality.
 ---
 

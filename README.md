@@ -101,7 +101,7 @@ Two tiers, not four. Backend architecture is uniform enough that one domain tier
 
 ### Reviewer subagent — one, not several
 
-`be-reviewer` checks layer boundaries, the error contract, database rules, and query performance
+`agents-reviewer` checks layer boundaries, the error contract, database rules, and query performance
 against the numbered rules in `AGENTS.md`. One agent with a real rulebook beats several with
 overlapping mandates.
 
@@ -186,7 +186,7 @@ be-agent-config/
 ├── .claude/
 │   ├── settings.json            Hook wiring, permission allow/deny lists
 │   ├── rules/                   12 files · common → backend
-│   ├── agents/                  be-reviewer.md
+│   ├── agents/                  agents-reviewer.md
 │   ├── anti-patterns/           2 documented failures + INDEX.md
 │   ├── hooks/                   4 scripts + lib.sh — migration-guard.sh is the key one
 │   ├── commands/                13 slash commands (generated)
@@ -265,6 +265,31 @@ clone and read the layer** — this is for when you wire the gate into a real re
 The list is short: a backend repository needs **one** secret. Skip to
 [the checklist](#checklist) if you just want it.
 
+### What costs money, and what does not
+
+**Everything required to make this layer work is free.** Only the enforcement layer on top of it is
+tier-dependent, and it is tier-dependent in one specific way: **private repositories.**
+
+| Feature | Public repo | Private repo on the free plan |
+| :-- | :-- | :-- |
+| Actions minutes | Free, unmetered | Monthly allowance, then billed |
+| Workflows, secrets, variables | Free | Free |
+| Container registry (`ghcr.io`) | Free | Storage allowance, then billed |
+| Dependabot alerts + security updates | Free | **Free** |
+| Secret scanning + push protection | Free | Paid add-on |
+| Code scanning | Free | Paid add-on |
+| `CODEOWNERS` auto-review-request | Free | Paid — Pro, Team, or Enterprise |
+| **Branch protection / rulesets** | **Free** | **Paid — Pro, Team, or Enterprise** |
+
+So the honest summary:
+
+- **Public repository:** every step below is available to you at no cost.
+- **Private repository, free plan:** everything through the container registry works. Branch
+  protection does not — see [Nice to have — branch protection](#nice-to-have--branch-protection) below.
+
+> Plans and limits change. Check GitHub's current pricing page before concluding a feature is out
+> of reach — this table reflects the tiers at the time of writing, not a promise.
+
 ### Step 0 — Create the branches (this is what turns the workflows on)
 
 ```bash
@@ -321,23 +346,7 @@ setting is a ceiling the job-level declaration cannot exceed.
 After the first successful push, the package appears under your profile's **Packages** tab, private
 by default. Make it public there if your deploy target pulls it anonymously.
 
-### Step 4 — Branch protection
-
-Not required for the workflows to run, but it is what converts the gate from advice into
-enforcement. **Settings → Rules → Rulesets → New branch ruleset**, applied to `dev` and `prod`:
-
-| Setting | Value | Why |
-| :-- | :-- | :-- |
-| Require a pull request before merging | on | The gate triggers on `pull_request`. Direct pushes bypass it entirely |
-| Require status checks to pass | on, select **Quality Gate** | Without this the gate reports and merges anyway |
-| Require branches to be up to date | on | Otherwise the gate passes against a stale base |
-| Block force pushes | on | The strip pipeline's history is not recoverable from a force push |
-
-**On a backend, make the spec-drift check a required status too.** It is the only thing standing
-between a changed route and a silently stale contract that other repositories generate their
-clients from. A drift check that can be merged past is not a contract.
-
-### Step 5 — Dependabot and secret scanning
+### Step 4 — Dependabot and secret scanning
 
 **Settings → Code security**, and both are worth more here than on a frontend:
 
@@ -354,6 +363,54 @@ Dependabot's pull requests target `dev`, so they run the full gate like any othe
 > patched release via `overrides`, then delete the flags. A flag left behind after the problem is
 > fixed will hide the next report for a different vulnerability.
 
+### Nice to have — branch protection
+
+**This step is optional, and on a private repository it is a paid feature** (GitHub Pro, Team, or
+Enterprise). On a public repository it is free.
+
+Everything above works without it. What it adds is the difference between the gate **reporting** a
+failure and the gate **preventing** a merge.
+
+If you have it, **Settings → Rules → Rulesets → New branch ruleset**, applied to `dev` and `prod`:
+
+| Setting | Value | Why |
+| :-- | :-- | :-- |
+| Require a pull request before merging | on | The gate triggers on `pull_request`. Direct pushes bypass it entirely |
+| Require status checks to pass | on, select **Quality Gate** | Without this the gate reports and merges anyway |
+| Require branches to be up to date | on | Otherwise the gate passes against a stale base |
+| Block force pushes | on | The strip pipeline's history is not recoverable from a force push |
+
+**If you have it, make the spec-drift check a required status too.** It is the only thing standing
+between a changed route and a silently stale contract that other repositories generate their
+clients from. A drift check that can be merged past is not a contract.
+
+#### If you do not have it
+
+The gate still runs on every pull request and still shows red or green. What is missing is only the
+block. Three things close most of that gap for free:
+
+**1. Run the gate before you push.** It is the same script CI runs, so there are no surprises:
+
+```bash
+bash .github/scripts/quality-gate.sh origin/dev
+```
+
+**2. Make it automatic with a pre-push hook.** This genuinely enforces — the push does not happen:
+
+```bash
+# .husky/pre-push
+bash .github/scripts/quality-gate.sh origin/dev
+```
+
+Local hooks can be skipped with `--no-verify`, so this is discipline rather than a wall. But it
+catches the ordinary case, which is someone forgetting, not someone deliberately bypassing.
+
+**3. `CODEOWNERS` still requests reviewers.** The shipped file says as much in its own comment:
+without branch protection it is a prompt, not a gate. A prompt is still worth having.
+
+If the repository can be public, making it public is the cheapest way to get real enforcement —
+branch protection, secret scanning, and push protection all become free at once.
+
 ### Checklist
 
 ```
@@ -362,11 +419,14 @@ Dependabot's pull requests target `dev`, so they run the full gate like any othe
 □ Secret:  DOKPLOY_WEBHOOK_URL          (or delete the deploy job)
 □ Variable: CI_RUNNER                   (or leave unset — defaults to ubuntu-latest)
 □ Workflow permissions → Read and write (required for ghcr.io)
+□ Dependabot alerts + security updates enabled       ← free everywhere
+□ Application runtime secrets live in your deploy platform, NOT in Actions secrets
+
+Nice to have — free on public repos, paid on private:
 □ Branch ruleset on dev and prod; Quality Gate AND spec drift required
-□ Dependabot alerts + security updates enabled
 □ Secret scanning + push protection enabled
-□ CODEOWNERS updated from @your-github-handle
-□ Application runtime secrets are in your deploy platform, NOT in Actions secrets
+□ CODEOWNERS updated from @your-github-handle (the file is free to add;
+  auto-requesting reviewers from it needs a paid plan on a private repo)
 ```
 
 ### Verifying it without burning minutes
