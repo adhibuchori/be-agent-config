@@ -175,6 +175,7 @@ and delete the ones you do not use along with their rows.
 | --- | --- |
 | Hooks, GitHub and CI, reviews, MCP pins, deploy verification, skill scanning | `.claude/OPERATIONS.md` |
 | Known traps — scan the trigger keywords before debugging | `.claude/anti-patterns/INDEX.md` |
+| Sealed bodies, the route registry and keys (where adopted) | `.claude/PAYLOAD-CONTRACT.md` |
 | Reviewing a change: the human checklist, keyed to AGENTS.md rules | `.claude/docs/code-review-checklist.md` |
 | Postgres through `db-dev`/`db-prod`: topology, tunnel, production rules | `.claude/DATABASE.md` |
 | CI runner pools and what they cost | `.claude/CI-RUNNERS.md` |
