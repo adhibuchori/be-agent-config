@@ -1,0 +1,12 @@
+// Lint settings for this repository's own docs:
+//   markdownlint-cli2 README.md README.id.md SETUP.md "docs/*.md"
+// Prose wraps at 100 columns; tables and code blocks keep their natural width.
+{
+  "config": {
+    "MD013": { "line_length": 100, "tables": false, "code_blocks": false },
+    // The README opens with its banner, a <picture>, before the first heading.
+    "MD041": { "allow_preamble": true },
+    // Only what GitHub renders for themed images and collapsed sections.
+    "MD033": { "allowed_elements": ["p", "picture", "source", "img", "details", "summary"] }
+  }
+}

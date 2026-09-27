@@ -1,0 +1,21 @@
+{
+  "$schema": "./node_modules/oxfmt/configuration_schema.json",
+  "tabWidth": 2,
+  "useTabs": false,
+  "printWidth": 100,
+  "singleQuote": true,
+  "trailingComma": "all",
+  "semi": true,
+  "bracketSpacing": true,
+  "arrowParens": "always",
+  "endOfLine": "lf",
+  "ignorePatterns": [
+    "node_modules/",
+    "dist/",
+    "src/db/migrations/",
+    // Shared unchanged with the sibling agent-config templates, which decide their layout; a
+    // format pass here would fork them.
+    "scripts/check/coverage-policy.mjs",
+    "scripts/check/folder-shape.mjs"
+  ]
+}

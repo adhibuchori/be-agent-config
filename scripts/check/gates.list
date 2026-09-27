@@ -1,0 +1,17 @@
+# This repo's gates: `bash scripts/check/gates.sh` runs them, and so does .husky/pre-commit.
+# <kinds><TAB><command>. Kinds pick the gates a commit needs from what it stages; see gates.sh.
+all	@format
+all	gitleaks git --staged --no-banner --redact --config .gitleaks.toml
+code	bun run type-check
+code	bun run check:dead-code
+code	bun run check:constants
+code	bun run check:mocks
+code	bash scripts/check/double-assertion.sh
+code	bun run check:folder-shape
+code	bun run check:coverage-policy
+code	bun run test:coverage
+all	bash scripts/check/ai-config.sh
+code	bash scripts/check/ai-config-probes.sh
+commands	bash scripts/sync/workflows.sh --check
+hooks	bash scripts/check/hook-probes.sh
+commands,hooks	bash scripts/check/skills.sh --staged
