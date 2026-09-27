@@ -430,7 +430,7 @@ entries from `.claude/settings.json`.
    bash scripts/sync/workflows.sh --check   # the command mirrors match their sources
    ```
 
-   In a fresh copy they end with `hook probes: 2330 passed, 0 failed`,
+   In a fresh copy they end with `hook probes: 2333 passed, 0 failed`,
    `AI config within budget`, and `✓ All targets, orphans, and INDEX.md coverage are in sync`.
 
 **Tip:** commit the copied layer in a commit of its own; then one `git revert` takes it out again
@@ -700,7 +700,7 @@ its own with `--only` and a part of its command, for example
 | [`ai-config.sh`](scripts/check/ai-config.sh) | Every cited rule exists in `AGENTS.md`; always-loaded context under 15,000 bytes; hook wiring; exact MCP pins | Runs when anything is staged; `bash scripts/check/ai-config.sh` | The agent's instructions stay true and small |
 | [`ai-config-probes.sh`](scripts/check/ai-config-probes.sh) | Proves the MCP pin rule both ways in a temp repo | Runs for staged code | A pin check that lets a moving version through fails loudly |
 | `workflows.sh --check` ([`workflows.sh`](scripts/sync/workflows.sh)) | Fails when a command mirror or `INDEX.md` row drifted from `_workflow-source/` | Runs when commands are staged | Every copy of a command says the same thing |
-| [`hook-probes.sh`](scripts/check/hook-probes.sh) + [`hook-probes.tsv`](scripts/check/hook-probes.tsv) | Feeds 2,330 probes to the hooks as Claude Code would and checks each verdict | Runs when a hook, `settings.json`, the probes or the unlock files are staged; `bash scripts/check/hook-probes.sh` | A guard that stopped blocking, or started blocking too much, is caught |
+| [`hook-probes.sh`](scripts/check/hook-probes.sh) + [`hook-probes.tsv`](scripts/check/hook-probes.tsv) | Feeds 2,333 probes to the hooks as Claude Code would and checks each verdict | Runs when a hook, `settings.json`, the probes or the unlock files are staged; `bash scripts/check/hook-probes.sh` | A guard that stopped blocking, or started blocking too much, is caught |
 | [`skills.sh`](scripts/check/skills.sh) + [`.skillspector-baseline.yaml`](.skillspector-baseline.yaml) | SkillSpector, pinned to one commit, over commands, agents, skills and hooks | Runs when commands or hooks are staged; `bash scripts/check/skills.sh --staged` | A prompt-injection line or an unsafe shell step is caught like a bad dependency |
 
 These run only in the pull-request gate, [`.github/scripts/quality-gate.sh`](.github/scripts/quality-gate.sh),
@@ -1226,7 +1226,7 @@ deploy path that way; a merge into `prod` deploys and strips for real.
   each feedback hook stays silent on failure. The
   [fail-mode table](.claude/hooks/README.md#fail-modes) lists every case.
 - **Every rule is proven both ways, and you can audit it.** `bash scripts/check/hook-probes.sh`
-  runs 2,330 probes. [`scripts/check/hook-probes.tsv`](scripts/check/hook-probes.tsv) holds the
+  runs 2,333 probes. [`scripts/check/hook-probes.tsv`](scripts/check/hook-probes.tsv) holds the
   845 command probes for `safety-check.sh` (569 must block, 276 must pass); the harness adds the
   other hooks, the fail modes, a linked worktree and the plugin-mode gate.
   [`ai-config-probes.sh`](scripts/check/ai-config-probes.sh) and
@@ -1255,7 +1255,7 @@ runs per hook, while other jobs kept the load average near 6, so an idle machine
 | `db-guard.sh`, `mcp-guard.sh`, `migration-guard.sh` | about 85 to 105 ms each |
 | `post-edit.sh` with no formatter installed | about 115 ms; a formatter or linter adds its own time (60 s timeout) |
 | `post-commit.sh`, `prompt-intent.sh`, `session-start.sh` | about 60 to 85 ms each |
-| `hook-probes.sh` | 2,330 probes in 9 min 17 s |
+| `hook-probes.sh` | 2,333 probes in 9 min 17 s |
 | Pre-commit | staged code runs every gate except the hook probes; those run only when a hook file is staged |
 | CI | only on pull requests: nothing on push, nothing on a schedule; `workflows-lint` only when `.github/**` changes |
 
@@ -1452,7 +1452,7 @@ permission from the chat.
 
 **Do the hooks work with macOS's bash 3.2?**
 Yes. They are written for bash 3.2, and `/bin/bash scripts/check/hook-probes.sh` proves it:
-2,330 passed, 0 failed on macOS `/bin/bash` 3.2.57. macOS has no `timeout` command; `lib.sh`
+2,333 passed, 0 failed on macOS `/bin/bash` 3.2.57. macOS has no `timeout` command; `lib.sh`
 stops a slow process itself.
 
 **What happens without jq or python3?**

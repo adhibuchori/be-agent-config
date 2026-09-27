@@ -451,7 +451,7 @@ hapus entri `"hooks"` itu dari `.claude/settings.json`.
    bash scripts/sync/workflows.sh --check   # salinan command cocok dengan sumbernya
    ```
 
-   Di salinan yang masih baru, ketiganya berakhir dengan `hook probes: 2330 passed, 0 failed`,
+   Di salinan yang masih baru, ketiganya berakhir dengan `hook probes: 2333 passed, 0 failed`,
    `AI config within budget`, dan `✓ All targets, orphans, and INDEX.md coverage are in sync`.
 
 **Tip:** commit lapisan hasil salinan dalam commit tersendiri; dengan begitu satu `git revert`
@@ -727,7 +727,7 @@ dipanggilnya.
 | [`ai-config.sh`](scripts/check/ai-config.sh) | Setiap aturan yang dikutip ada di `AGENTS.md`; konteks yang selalu dimuat di bawah 15.000 byte; pemasangan hook; pin MCP yang persis | Berjalan bila ada apa pun yang di-stage; `bash scripts/check/ai-config.sh` | Instruksi untuk agen tetap benar dan ringkas |
 | [`ai-config-probes.sh`](scripts/check/ai-config-probes.sh) | Membuktikan aturan pin MCP dari dua arah di repo sementara | Berjalan untuk kode yang di-stage | Pemeriksaan pin yang meloloskan versi bergerak gagal dengan jelas |
 | `workflows.sh --check` ([`workflows.sh`](scripts/sync/workflows.sh)) | Gagal bila salinan command atau baris `INDEX.md` melenceng dari `_workflow-source/` | Berjalan bila command di-stage | Setiap salinan command mengatakan hal yang sama |
-| [`hook-probes.sh`](scripts/check/hook-probes.sh) + [`hook-probes.tsv`](scripts/check/hook-probes.tsv) | Memberikan 2.330 probe ke hook seperti yang dilakukan Claude Code dan memeriksa setiap putusannya | Berjalan bila hook, `settings.json`, probe, atau file unlock di-stage; `bash scripts/check/hook-probes.sh` | Guard yang berhenti memblokir, atau mulai memblokir terlalu banyak, tertangkap |
+| [`hook-probes.sh`](scripts/check/hook-probes.sh) + [`hook-probes.tsv`](scripts/check/hook-probes.tsv) | Memberikan 2.333 probe ke hook seperti yang dilakukan Claude Code dan memeriksa setiap putusannya | Berjalan bila hook, `settings.json`, probe, atau file unlock di-stage; `bash scripts/check/hook-probes.sh` | Guard yang berhenti memblokir, atau mulai memblokir terlalu banyak, tertangkap |
 | [`skills.sh`](scripts/check/skills.sh) + [`.skillspector-baseline.yaml`](.skillspector-baseline.yaml) | SkillSpector, di-pin ke satu commit, atas command, agen, skill, dan hook | Berjalan bila command atau hook di-stage; `bash scripts/check/skills.sh --staged` | Baris prompt injection atau langkah shell yang tidak aman tertangkap seperti dependensi yang buruk |
 
 Yang berikut hanya berjalan di gate pull request,
@@ -1274,7 +1274,7 @@ menguji jalur deploy dengan cara itu; merge ke `prod` benar-benar men-deploy dan
   (masukan rusak, python3 yang hilang, proses yang macet), dan setiap hook umpan balik diam saat
   gagal. [Tabel mode gagal](.claude/hooks/README.md#fail-modes) mendaftar setiap kasusnya.
 - **Setiap aturan dibuktikan dari dua arah, dan Anda bisa mengauditnya.**
-  `bash scripts/check/hook-probes.sh` menjalankan 2.330 probe.
+  `bash scripts/check/hook-probes.sh` menjalankan 2.333 probe.
   [`scripts/check/hook-probes.tsv`](scripts/check/hook-probes.tsv) berisi 845 probe perintah untuk
   `safety-check.sh` (569 harus diblokir, 276 harus lolos); harness-nya menambahkan hook lain, mode
   gagal, worktree yang ditautkan, dan gate mode plugin.
@@ -1306,7 +1306,7 @@ yang menganggur lebih cepat:
 | `db-guard.sh`, `mcp-guard.sh`, `migration-guard.sh` | sekitar 85 sampai 105 ms masing-masing |
 | `post-edit.sh` tanpa formatter terpasang | sekitar 115 ms; formatter atau linter menambah waktunya sendiri (timeout 60 detik) |
 | `post-commit.sh`, `prompt-intent.sh`, `session-start.sh` | sekitar 60 sampai 85 ms masing-masing |
-| `hook-probes.sh` | 2.330 probe dalam 9 menit 17 detik |
+| `hook-probes.sh` | 2.333 probe dalam 9 menit 17 detik |
 | Pre-commit | kode yang di-stage menjalankan setiap gate kecuali probe hook; probe itu hanya berjalan bila file hook di-stage |
 | CI | hanya pada pull request: tidak ada saat push, tidak ada yang terjadwal; `workflows-lint` hanya bila `.github/**` berubah |
 
@@ -1517,7 +1517,7 @@ ada yang membaca izin dari chat.
 
 **Apakah hook berfungsi dengan bash 3.2 milik macOS?**
 Ya. Hook ditulis untuk bash 3.2, dan `/bin/bash scripts/check/hook-probes.sh` membuktikannya:
-2.330 lolos, 0 gagal di `/bin/bash` 3.2.57 milik macOS. macOS tidak punya perintah `timeout`;
+2.333 lolos, 0 gagal di `/bin/bash` 3.2.57 milik macOS. macOS tidak punya perintah `timeout`;
 `lib.sh` menghentikan proses yang lambat dengan sendirinya.
 
 **Apa yang terjadi tanpa jq atau python3?**
