@@ -38,6 +38,19 @@ rewrite condenses a diff and prints a line even for an empty one, so a truncated
 - A known advisory in the dependencies: run `bun audit` on every review, not only when the
   lockfile changed, and report what it finds
 
+Run the cheap scans first and report what they print (with RTK installed, as `rtk proxy …`):
+
+```bash
+bash scripts/check/secrets.sh                      # gitleaks over the staged changes
+git diff --cached --name-only | grep -E '(^|/)\.env(\.|$)' | grep -v '\.example$'   # a real env file staged
+git diff --cached | grep -niE "(api[_-]?key|secret|password|token|private[_-]?key)[\"']?[[:space:]]*[:=][[:space:]]*[\"'][^\"']{8,}"
+```
+
+Where the repo adopted the payload contract (`payload.config.json`, AGENTS.md §P), also: a new
+route missing from the registry, a policy edited in the generated registry, or an exemption with no
+reason (`bun run check:endpoints` decides them); a handler that reads the body before the payload
+middleware replays it.
+
 ## Step 3: Correctness
 
 - **Missing `await` on a Drizzle query** (Rule 37) — the single most common real bug here. It
@@ -58,6 +71,10 @@ rewrite condenses a diff and prints a line even for an empty one, so a truncated
 
 ## Step 5: Report
 
-Group findings as CRITICAL / HIGH / MEDIUM / LOW. CRITICAL blocks the merge; HIGH should be
-fixed before it. State clearly whether the change is approved, approved with warnings, or
-blocked.
+Group findings as CRITICAL / HIGH / MEDIUM / LOW, each with file, line, the rule it breaks and the
+fix. CRITICAL blocks the merge; HIGH should be fixed before it. State clearly whether the change is
+approved, approved with warnings, or blocked. Name any step you could not run, and list the gates
+you ran with their result.
+
+Then offer the fixes: apply all, go one by one, or leave them. Apply nothing before the user
+chooses (`/ship` applies them down to MEDIUM without asking).

@@ -356,7 +356,10 @@ previous container answering.
 
 ### 3.3 Smoke test
 
-Check `https://<app-host>` and exercise the change itself, not just that the process is up.
+Check `https://<app-host>` and exercise the change itself, not just that the process is up. When
+the change touches sign-in, sessions or checkout, walk the browser pass from `/promote` §2.3 against
+the live site with a test account; after a change to third-party sign-in, start it: it must reach
+the provider's account chooser, not a redirect-URI error.
 
 For anything touching CORS, test with the **actual frontend origin**. Rejecting `evil.example`
 proves nothing: an origin allowlist that is unset and falls back to a development origin rejects
