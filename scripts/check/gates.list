@@ -9,7 +9,7 @@ code	bun run check:mocks
 code	bash scripts/check/double-assertion.sh
 code	bun run check:folder-shape
 code	bun run check:coverage-policy
-code	bun run test:coverage
+code	bash scripts/check/ci-env.sh bun run test:coverage
 all	bash scripts/check/ai-config.sh
 code	bash scripts/check/ai-config-probes.sh
 commands	bash scripts/sync/workflows.sh --check

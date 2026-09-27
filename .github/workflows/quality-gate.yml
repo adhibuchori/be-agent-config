@@ -22,6 +22,7 @@ jobs:
 
     # Dummy values and no `services:` block: src/env.ts validates on import, but the unit tier
     # dials none of them (src/test/preload.ts). Mirror your own src/env.ts schema here.
+    # scripts/check/ci-env.sh reads this block to run the unit tests locally with the same values.
     env:
       DATABASE_URL: postgresql://postgres:postgres@localhost:5432/app
       REDIS_URL: redis://localhost:6379

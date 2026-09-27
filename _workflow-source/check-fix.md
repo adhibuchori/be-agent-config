@@ -18,6 +18,9 @@ description: Write the format, run every gate in scripts/check/gates.list and th
      unit tests at 100% per file with no source file left unloaded, the AI config and the command
      mirrors. It prints each gate's exit code and the tail of every failure. Fix, re-run, repeat
      until every gate passes.
+   - The unit tests run through `scripts/check/ci-env.sh`: CI's variables (the job-level `env:`
+     block of `.github/workflows/quality-gate.yml`) and nothing from your shell or a `.env` file.
+     Run one test file the same way: `bash scripts/check/ci-env.sh bun test <path>`.
 
 3. **Build**: `bun run build`
    - Catches what `--noEmit` does not: bundler resolution failures.
