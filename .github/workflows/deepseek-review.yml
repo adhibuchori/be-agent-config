@@ -1,127 +1,98 @@
+# An AI review of each pull request into dev by DeepSeek, through agent-config-kit's reusable
+# workflow. It needs the DEEPSEEK_API_KEY secret (without it, it passes); README § CI/CD has the rest.
 name: DeepSeek Code Review
 
 on:
   pull_request:
-    # No `synchronize`: the action has no sticky comment, so every push would add
-    # another review. Re-run on demand with `/ask-deepseek` instead.
-    types: [opened, reopened]
-    # dev only. A dev -> prod diff re-adds the whole AI config that
-    # strip-ai-on-pr.yml removed, and GitHub answers 406 for a diff that size.
+    # dev only: a dev -> prod diff re-adds the AI config the strip removed.
+    types: [opened, reopened, ready_for_review]
     branches: [dev]
-  # On-demand: comment `/ask-deepseek` on a PR. GitHub runs this event from the
-  # workflow file on the default branch, so edits here reach comments once merged there.
+  # `/ask-deepseek` on a pull request. GitHub runs it from the default branch's copy of this file.
   issue_comment:
     types: [created]
-
-concurrency:
-  # issue_comment has no pull_request object — fall back to the issue number.
-  group: deepseek-review-${{ github.event.pull_request.number || github.event.issue.number }}
-  cancel-in-progress: true
 
 permissions:
   contents: read
 
+# A newer request replaces a running review; any other comment gets a group of its own.
+concurrency:
+  group: deepseek-review-${{ github.event.pull_request.number || github.event.issue.number }}-${{ (github.event_name == 'issue_comment' && !startsWith(github.event.comment.body, '/ask-deepseek')) && github.run_id || 'review' }}
+  cancel-in-progress: true
+
 jobs:
   deepseek-review:
     name: DeepSeek Code Review
-    # A pull request from a branch of this repository, or `/ask-deepseek` from someone with write
-    # access. A fork's run gets no secret, so it is skipped: https://github.com/adhibuchori/be-agent-config#the-review-workflow-and-its-secret
+    # A branch of this repository (a fork's run gets no secret), or /ask-deepseek from an owner,
+    # member or collaborator. The job checks nothing out: it reads the diff over the API.
     if: >-
       (github.event_name == 'pull_request' &&
       github.event.pull_request.head.repo.full_name == github.repository) ||
       (github.event_name == 'issue_comment' &&
       github.event.issue.pull_request &&
-      contains(github.event.comment.body, '/ask-deepseek') &&
+      startsWith(github.event.comment.body, '/ask-deepseek') &&
       contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association))
-    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
-    # The action has no HTTP timeout, so a stalled DeepSeek API hangs the job until
-    # this kills it. Successful runs take under a minute.
-    timeout-minutes: 3
     permissions:
-      contents: read # the action reads the pull request's diff over the API
-      pull-requests: write # the action posts its review as a pull request comment
+      contents: read # read the pull request and its changed files over the API
+      pull-requests: write # post or update the one review comment
+    uses: adhibuchori/agent-config-kit/.github/workflows/deepseek-review.yml@8699a5bed2aa9d986c459f65b3e519c7bbe162d1 # v1.2.0
+    with:
+      # What this repository is and the rules no gate checks; lockfiles are always left out.
+      instructions: |
+        Bun + Hono backend on strict TypeScript,
+        using @hono/zod-openapi for routing, Drizzle ORM on PostgreSQL, Pino for
+        logging, Redis (ioredis) with BullMQ queues, and better-auth.
 
-    steps:
-      # No actions/checkout: the action reads the diff over the API and runs no
-      # code from the pull request.
-      - name: DeepSeek Code Review
-        uses: hustcer/deepseek-review@eccde2e9781008d795e366b951e313e37af88dd5 # v1.21
-        with:
-          chat-token: ${{ secrets.DEEPSEEK_CODE_REVIEW_TOKEN }}
-          # The action ignores bots, non-PR issues, and anyone outside
-          # allowed-associations.
-          watch-mention: '/ask-deepseek'
-          allowed-associations: 'OWNER,MEMBER,COLLABORATOR'
-          model: deepseek-v4-pro
-          base-url: https://api.deepseek.com
-          temperature: '0.3'
-          # Migrations and the exported spec are generated: reviewing them produces
-          # noise, and AGENTS.md forbids hand-editing both.
-          exclude-patterns: 'bun.lock,package-lock.json,pnpm-lock.yaml,*.lock,src/db/migrations/*,drizzle/*,openapi.json'
-          sys-prompt: |
-            You are a code reviewer for a Bun + Hono backend on strict TypeScript,
-            using @hono/zod-openapi for routing, Drizzle ORM on PostgreSQL, Pino for
-            logging, Redis (ioredis) with BullMQ queues, and better-auth.
+        What this repo is, so you do not invent findings: <name its modules, the
+        layering deviations AGENTS.md's Compliance Status records as known, and
+        any integration that is deliberately unfinished>.
 
-            What this repo is, so you do not invent findings: <name its modules, the
-            layering deviations AGENTS.md's Compliance Status records as known, and
-            any integration that is deliberately unfinished>.
+        Project rules that apply here, keyed to AGENTS.md:
+        - §B Layer boundaries: routes declare HTTP and the OpenAPI contract only;
+          handlers are thin glue of at most 15 lines (Rule 28) and never import
+          the database (Rule 15); services hold the business logic and, by
+          default, the queries; a repository exists only on escalation (Rule 4)
+          and owns transaction boundaries. A query in a handler is a boundary
+          violation.
+        - §B Dependencies are injected through default parameters (Rule 7), not
+          a container. A service that constructs its own client instead of
+          accepting one is untestable — say so.
+        - §B No cross-module import except through the module's index.ts
+          barrel (Rule 8).
+        - §C Errors: every thrown error is a DomainError subclass or a Hono
+          HTTPException (Rule 11), mapped once into RFC 9457 problem+json.
+          Flag a handler that builds an error body by hand, and any error
+          response that leaks an ID, path, stack or upstream provider message
+          (Rule 12).
+        - §D Database: never hand-edit generated migrations or the generated
+          auth schema. The schema under src/db/schema/ is the source of truth.
+        - §E Tests: unit tests live in the module's __tests__/ and never need
+          real Postgres, Redis or network (Rule 20). External clients are
+          replaced only by the shared doubles in src/test/; flag a test that
+          calls mock.module itself.
+        - §F Security: validate at system boundaries; never read process.env
+          outside src/env.ts (Rule 22); never log secrets or PII.
+        - §G Code quality: files at most 200 lines (Rule 26), no explicit any and
+          no double assertion (Rule 42), shared identifiers imported from their
+          one home (Rule 43), never console.* (Rule 23), prefer early returns.
+        - §H Query and performance: watch for N+1 queries, a missing index on a
+          new filter or join predicate, unbounded result sets, and await inside
+          a loop where the work could run concurrently.
+        - §I Runtime hardening: request timeouts, body-size limits, and pool
+          limits must not be weakened.
 
-            Label every finding with a severity: CRITICAL (security or data-loss
-            risk — blocks merge), HIGH (bug or significant quality issue), MEDIUM
-            (maintainability concern), LOW (style or minor suggestion).
+        The quality gate that runs alongside this PR covers formatting, linting,
+        type-checking, dead code, unit tests at 100% coverage, the dependency
+        audit, a secret scan and the spec-drift check. Do not repeat those. The
+        secret scan and the audit match known patterns and known advisories;
+        neither reads intent, so security and correctness findings are in scope
+        and are the most valuable thing you can report.
 
-            Project rules that apply here, keyed to AGENTS.md:
-            - §B Layer boundaries: routes declare HTTP and the OpenAPI contract only;
-              handlers are thin glue of at most 15 lines (Rule 28) and never import
-              the database (Rule 15); services hold the business logic and, by
-              default, the queries; a repository exists only on escalation (Rule 4)
-              and owns transaction boundaries. A query in a handler is a boundary
-              violation.
-            - §B Dependencies are injected through default parameters (Rule 7), not
-              a container. A service that constructs its own client instead of
-              accepting one is untestable — say so.
-            - §B No cross-module import except through the module's index.ts
-              barrel (Rule 8).
-            - §C Errors: every thrown error is a DomainError subclass or a Hono
-              HTTPException (Rule 11), mapped once into RFC 9457 problem+json.
-              Flag a handler that builds an error body by hand, and any error
-              response that leaks an ID, path, stack or upstream provider message
-              (Rule 12).
-            - §D Database: never hand-edit generated migrations or the generated
-              auth schema. The schema under src/db/schema/ is the source of truth.
-            - §E Tests: unit tests live in the module's __tests__/ and never need
-              real Postgres, Redis or network (Rule 20). External clients are
-              replaced only by the shared doubles in src/test/; flag a test that
-              calls mock.module itself.
-            - §F Security: validate at system boundaries; never read process.env
-              outside src/env.ts (Rule 22); never log secrets or PII.
-            - §G Code quality: files at most 200 lines (Rule 26), no explicit any and
-              no double assertion (Rule 42), shared identifiers imported from their
-              one home (Rule 43), never console.* (Rule 23), prefer early returns.
-            - §H Query and performance: watch for N+1 queries, a missing index on a
-              new filter or join predicate, unbounded result sets, and await inside
-              a loop where the work could run concurrently.
-            - §I Runtime hardening: request timeouts, body-size limits, and pool
-              limits must not be weakened.
+        The CI index check verifies that an index exists. It deliberately does
+        not judge composite index column order — that is yours to review.
 
-            The quality gate that runs alongside this PR covers formatting, linting,
-            type-checking, dead code, unit tests at 100% coverage, the dependency
-            audit, a secret scan and the spec-drift check. Do not repeat those. The
-            secret scan and the audit match known patterns and known advisories;
-            neither reads intent, so security and correctness findings are in scope
-            and are the most valuable thing you can report.
-
-            The CI index check verifies that an index exists. It deliberately does
-            not judge composite index column order — that is yours to review.
-
-            Access control is where a defect costs the most. Give authorization and
-            role checks, and anything that moves money or handles a webhook, more
-            scrutiny than anything else in a diff.
-
-            Report an issue only when you can name the input or state that triggers
-            it and what breaks as a result. Prefer a few well-evidenced findings
-            over broad coverage. If the diff is sound, say so briefly. Answer in
-            English, formatted as Markdown.
-          user-prompt: |
-            Review the following diff. Cite the file and line for every finding.
+        Access control is where a defect costs the most. Give authorization and
+        role checks, and anything that moves money or handles a webhook, more
+        scrutiny than anything else in a diff.
+      exclude: 'src/db/migrations/* drizzle/* openapi.json'
+    secrets:
+      DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}

@@ -20,9 +20,8 @@ jobs:
     runs-on: ${{ vars.CI_RUNNER_FAST || vars.CI_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 20
 
-    # Dummy values and no `services:` block: src/env.ts validates on import, but the unit tier
-    # dials none of them (src/test/preload.ts). Mirror your own src/env.ts schema here.
-    # scripts/check/ci-env.sh reads this block to run the unit tests locally with the same values.
+    # Dummy values, no `services:`: the unit tier dials none of them (src/test/preload.ts). Mirror
+    # src/env.ts here; scripts/check/ci-env.sh reads this block to run the unit tests the same way.
     env:
       DATABASE_URL: postgresql://postgres:postgres@localhost:5432/app
       REDIS_URL: redis://localhost:6379

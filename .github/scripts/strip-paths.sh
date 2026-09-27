@@ -8,7 +8,7 @@
 # reach git as pathspecs instead of being expanded against the working tree.
 set -f
 
-STRIP_PATHS=".agent .agents .claude .serena _workflow-source AGENTS.md CLAUDE.md SSOT.md .mcp.json promote-deploy-logs .skillspector-baseline.yaml"
+STRIP_PATHS=".agent .agents .claude .gemini .serena .impeccable _workflow-source AGENTS.md CLAUDE.md GEMINI.md SSOT.md PRODUCT.md PRODUCT.example.md DESIGN.md DESIGN.example.md skills-lock.json .mcp.json .skillspector-baseline.yaml .github/gemini.yaml .github/skills promote-deploy-logs"
 STRIP_GLOBS=""
 
 LIST="${STRIP_AI_LIST:-${RUNNER_TEMP:-${TMPDIR:-/tmp}}/stripped-paths.txt}"
