@@ -328,8 +328,9 @@ examples above behave as described; the probes prove it.
 It **fails closed**. Only exit 2 blocks (§2), so a guard that crashes, or runs past its timeout,
 would let the call through; instead, a payload it cannot parse, an analyzer crash or an analysis
 over 8 s is refused. Without python3 only plain-text rules stand in (protected pushes, recursive
-deletes, a hard reset or forced clean, a skipped gate, `.env*` names and the unlock), and Claude is
-told so; everything else runs unchecked on such a machine.
+deletes, a hard reset or forced clean, a skipped gate, `.env*` names, the unlock, `scripts/env/`,
+the files that turn the guards on and the guard scripts), and Claude is told so; everything else
+runs unchecked on such a machine.
 
 **What it cannot resolve, it refuses.** A file name or command built at run time used to be the
 analyzer's blind spot: `$( )` output used as a command or a file to read, `eval` and decoded
@@ -347,7 +348,7 @@ open, because git confirms that file list before the hook accepts it.
 through, in temporary repositories, with the fail modes (python3 missing, jq missing, a broken
 payload) and a linked git worktree included. It runs in pre-commit when a commit stages a hook,
 `settings.json`, the probes, `scripts/ops/unlock.sh` or `scripts/env/`, and on every pull request;
-other code skips it, because it takes about three minutes. A change to a hook adds one probe it
+other code skips it, because it takes about ten minutes. A change to a hook adds one probe it
 must stop and one it must let through, and is proven load-bearing by breaking the rule and watching
 the probe fail.
 
@@ -462,14 +463,14 @@ What it does instead:
 
 - **The operating system backs the hooks.** `.claude/settings.json` turns on Claude Code's Bash
   sandbox by default (`sandbox.enabled: true`): a sandboxed command, and anything it starts, cannot
-  read `.env*` files or the backups, or write under `.claude/state/unlock/`, however its command
-  line was built. Only `show.sh` and `set.sh` run outside it. The application still reads `.env`
-  when it runs, so a command that needs it is retried outside the sandbox after Claude Code asks
-  you (`sandbox.allowUnsandboxedCommands: false` forbids that retry). The sandbox needs macOS, or
-  Linux or WSL2 with `bubblewrap` and `socat`, and not WSL1 or native Windows; where it cannot
-  start, Claude Code warns and runs commands without it unless `sandbox.failIfUnavailable` is
-  `true`, and the hooks stand alone. `"sandbox": {"enabled": false}` in `.claude/settings.json` or
-  `.claude/settings.local.json` turns it off.
+  read `.env*` files or the backups, or write under `.claude/state/unlock/` or `.claude/hooks/` or
+  to `scripts/ops/unlock.sh`, however its command line was built. Only `show.sh` and `set.sh` run
+  outside it. The application still reads `.env` when it runs, so a command that needs it is retried
+  outside the sandbox after Claude Code asks you (`sandbox.allowUnsandboxedCommands: false` forbids
+  that retry). The sandbox needs macOS, or Linux or WSL2 with `bubblewrap` and `socat`, and not WSL1
+  or native Windows; where it cannot start, Claude Code warns and runs commands without it unless
+  `sandbox.failIfUnavailable` is `true`, and the hooks stand alone. `"sandbox": {"enabled": false}`
+  in `.claude/settings.json` or `.claude/settings.local.json` turns it off.
 
 The hooks are the guardrail against slips and injected instructions (§16); the sandbox is the
 boundary that holds when a command gets past them. `docs/unlock.md` says what neither stops.

@@ -430,7 +430,7 @@ entries from `.claude/settings.json`.
    bash scripts/sync/workflows.sh --check   # the command mirrors match their sources
    ```
 
-   In a fresh copy they end with `hook probes: 1772 passed, 0 failed`,
+   In a fresh copy they end with `hook probes: 2256 passed, 0 failed`,
    `AI config within budget`, and `✓ All targets, orphans, and INDEX.md coverage are in sync`.
 
 **Tip:** commit the copied layer in a commit of its own; then one `git revert` takes it out again
@@ -700,7 +700,7 @@ its own with `--only` and a part of its command, for example
 | [`ai-config.sh`](scripts/check/ai-config.sh) | Every cited rule exists in `AGENTS.md`; always-loaded context under 15,000 bytes; hook wiring; exact MCP pins | Runs when anything is staged; `bash scripts/check/ai-config.sh` | The agent's instructions stay true and small |
 | [`ai-config-probes.sh`](scripts/check/ai-config-probes.sh) | Proves the MCP pin rule both ways in a temp repo | Runs for staged code | A pin check that lets a moving version through fails loudly |
 | `workflows.sh --check` ([`workflows.sh`](scripts/sync/workflows.sh)) | Fails when a command mirror or `INDEX.md` row drifted from `_workflow-source/` | Runs when commands are staged | Every copy of a command says the same thing |
-| [`hook-probes.sh`](scripts/check/hook-probes.sh) + [`hook-probes.tsv`](scripts/check/hook-probes.tsv) | Feeds 1,772 probes to the hooks as Claude Code would and checks each verdict | Runs when a hook, `settings.json`, the probes or the unlock files are staged; `bash scripts/check/hook-probes.sh` | A guard that stopped blocking, or started blocking too much, is caught |
+| [`hook-probes.sh`](scripts/check/hook-probes.sh) + [`hook-probes.tsv`](scripts/check/hook-probes.tsv) | Feeds 2,256 probes to the hooks as Claude Code would and checks each verdict | Runs when a hook, `settings.json`, the probes or the unlock files are staged; `bash scripts/check/hook-probes.sh` | A guard that stopped blocking, or started blocking too much, is caught |
 | [`skills.sh`](scripts/check/skills.sh) + [`.skillspector-baseline.yaml`](.skillspector-baseline.yaml) | SkillSpector, pinned to one commit, over commands, agents, skills and hooks | Runs when commands or hooks are staged; `bash scripts/check/skills.sh --staged` | A prompt-injection line or an unsafe shell step is caught like a bad dependency |
 
 These run only in the pull-request gate, [`.github/scripts/quality-gate.sh`](.github/scripts/quality-gate.sh),
@@ -834,8 +834,9 @@ Every workflow starts from a pull-request event; details and tokens are in [CI/C
 | Protected branches                 | A push to or deletion of `dev`, `prod`, `main` or `master`; `gh pr merge --delete-branch`                                                                                                                                           | Push a work branch and open a pull request; you run a release push with `!`     |
 | Secrets                            | Any shell read or write of a real `.env*` file or its backups: `cat`, `grep -r`, redirects, copies, `python -c`, `bun -e` printing what bun loaded, also inside a wrapper or package runner                                         | `bash scripts/env/show.sh <file>` (masked); `scripts/env/set.sh` while unlocked |
 | The unlock                         | The agent running `unlock.sh` or the `unlock` script directly, through a shell, a wrapper, a package runner, a git alias or `find -exec`, or writing under `.claude/state/unlock/`                                                  | You run `! bun unlock env`                                                      |
+| The guards themselves              | A shell change to the hooks, `scripts/check/hook-probes.*`, `unlock.sh`, `scripts/env/` or the settings that turn the guards on: `rm`, `mv`, `cp` over, a redirect, `sed -i`, `chmod`, `git checkout`                               | The Edit tool, which asks you first; or you run it with `!`                     |
 | Git settings that change behaviour | An alias, an include, a command git runs (`core.sshCommand`, `core.fsmonitor`, a pager that is not a plain viewer, a credential helper), a proxy or `url.*.insteadOf`, set with `-c` or `GIT_CONFIG_*` or written with `git config` | You set it yourself; `user.*`, `color.*` and a `less` pager stay open           |
-| Anything it cannot resolve         | `eval` or decoded code, `cat x \| sh`, `$( )` as a command name or file operand, a path built through `IFS` or an array, a package runner's command built from `$( )`, inline code that opens a file, `xargs` into a reader         | You run it with `!` if it is meant                                              |
+| Anything it cannot resolve         | `eval` or decoded code, `cat x \| sh`, `$( )` as a command or file, a path built via `IFS` or an array, a runner's command built from `$( )`, inline code that opens or changes a file, `xargs` into a reader or a changer          | You run it with `!` if it is meant                                              |
 
 **Wrappers and package runners are unwrapped.** `env`, `sudo`, `timeout`, `nice`, `xargs` and the
 other common wrappers are peeled, and so are `npx`, `bunx`, `pnpx` and the `exec`, `dlx` and `x`
@@ -851,14 +852,16 @@ that crashes, hangs or cannot read its input. The refusal tells Claude to hand t
 the sandbox. Refusing too much is the intended cost. The one file list a reader may take from a
 substitution is a plain `git ls-files` or `git diff --name-only`, because git confirms it first:
 `cat $(git ls-files '*.md')` still runs. Without python3 only a few plain-text rules stand in
-(protected pushes, recursive deletes, a hard reset or forced clean, a skipped gate, `.env*` names
-and the unlock), so install it.
+(protected pushes, recursive deletes, a hard reset or forced clean, a skipped gate, `.env*` names,
+the unlock, `scripts/env/`, the files that turn the guards on and the guard scripts), so install
+it.
 
 **A sandbox under the hooks, on by default.** `.claude/settings.json` turns on
 [Claude Code's Bash sandbox](https://code.claude.com/docs/en/sandboxing), with `sandbox.enabled`
 set to `true`. The operating system then stops every sandboxed command, and anything it starts, from
-reading `.env*` files or the backups and from writing under `.claude/state/unlock/`, however the
-command line was built. Only `scripts/env/show.sh` and `scripts/env/set.sh` run outside it.
+reading `.env*` files or the backups and from writing under `.claude/state/unlock/` or
+`.claude/hooks/` or to `scripts/ops/unlock.sh`, however the command line was built. Only
+`scripts/env/show.sh` and `scripts/env/set.sh` run outside it.
 
 - **Where it runs**: macOS as is; Linux and WSL2 with `bubblewrap` and `socat` installed; not WSL1
   or native Windows. Where it cannot start, Claude Code warns and runs commands without it unless
@@ -871,10 +874,11 @@ command line was built. Only `scripts/env/show.sh` and `scripts/env/set.sh` run 
 
 **Known limits.** The application reads `.env` when it runs, and its own output could show a value.
 A script file Claude writes and then runs is executed, not read. A program the hooks do not know
-that runs commands of its own (`watch`, `script`, `flock`, `parallel`) is judged by name only. The
-hooks are repo files the shell could change. Where the sandbox runs, it still holds the `.env*` and
-unlock files against the last three. [docs/unlock.md](docs/unlock.md#what-the-lock-does-not-stop)
-has the full list.
+that runs commands of its own (`watch`, `script`, `flock`, `parallel`) is judged by name only.
+Where the sandbox runs, it still holds the `.env*` and unlock files against the last two. The shell
+cannot change the hooks, the probes or the unlock script; the Edit tool can, after
+`.claude/settings.json` asks you. [docs/unlock.md](docs/unlock.md#what-the-lock-does-not-stop) has
+the full list.
 
 Each rule is proved both ways, what it must stop and what it must let through, by
 `bash scripts/check/hook-probes.sh`, under macOS's bash 3.2 as well.
@@ -1207,8 +1211,8 @@ deploy path that way; a merge into `prod` deploys and strips for real.
   each feedback hook stays silent on failure. The
   [fail-mode table](.claude/hooks/README.md#fail-modes) lists every case.
 - **Every rule is proven both ways, and you can audit it.** `bash scripts/check/hook-probes.sh`
-  runs 1,772 probes. [`scripts/check/hook-probes.tsv`](scripts/check/hook-probes.tsv) holds the
-  598 command probes for `safety-check.sh` (402 must block, 196 must pass); the harness adds the
+  runs 2,256 probes. [`scripts/check/hook-probes.tsv`](scripts/check/hook-probes.tsv) holds the
+  808 command probes for `safety-check.sh` (540 must block, 268 must pass); the harness adds the
   other hooks, the fail modes, a linked worktree and the plugin-mode gate.
   [`ai-config-probes.sh`](scripts/check/ai-config-probes.sh) and
   [`diff-scan-probes.sh`](.github/scripts/diff-scan-probes.sh) prove their checks the same way.
@@ -1232,11 +1236,11 @@ runs per hook, while other jobs kept the load average near 6, so an idle machine
 | Context loaded every session | 13,114 bytes: `CLAUDE.md` (8,836) and `common/working-agreements.md` (4,278); `ai-config.sh` fails above 15,000 |
 | Rules loaded only for matching files | 11 files, 39,715 bytes in all, each only while Claude works on a file it names |
 | Command and agent descriptions Claude Code lists | 2,982 bytes for the 15 commands and the reviewer |
-| `safety-check.sh` on one command | about 140 ms: `git status`, a refused force-push and a piped test run alike |
+| `safety-check.sh` on one command | about 165 ms: `git status`, a refused force-push and a piped test run alike (140 ms before the guard-script rules, which add about 17%; old and new run side by side) |
 | `db-guard.sh`, `mcp-guard.sh`, `migration-guard.sh` | about 85 to 105 ms each |
 | `post-edit.sh` with no formatter installed | about 115 ms; a formatter or linter adds its own time (60 s timeout) |
 | `post-commit.sh`, `prompt-intent.sh`, `session-start.sh` | about 60 to 85 ms each |
-| `hook-probes.sh` | 1,772 probes in 4 min 23 s |
+| `hook-probes.sh` | 2,256 probes in 9 min 39 s |
 | Pre-commit | staged code runs every gate except the hook probes; those run only when a hook file is staged |
 | CI | only on pull requests: nothing on push, nothing on a schedule; `workflows-lint` only when `.github/**` changes |
 
@@ -1433,7 +1437,7 @@ permission from the chat.
 
 **Do the hooks work with macOS's bash 3.2?**
 Yes. They are written for bash 3.2, and `/bin/bash scripts/check/hook-probes.sh` proves it:
-1,772 passed, 0 failed on macOS `/bin/bash` 3.2.57. macOS has no `timeout` command; `lib.sh`
+2,256 passed, 0 failed on macOS `/bin/bash` 3.2.57. macOS has no `timeout` command; `lib.sh`
 stops a slow process itself.
 
 **What happens without jq or python3?**

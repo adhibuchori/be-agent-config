@@ -451,7 +451,7 @@ hapus entri `"hooks"` itu dari `.claude/settings.json`.
    bash scripts/sync/workflows.sh --check   # salinan command cocok dengan sumbernya
    ```
 
-   Di salinan yang masih baru, ketiganya berakhir dengan `hook probes: 1772 passed, 0 failed`,
+   Di salinan yang masih baru, ketiganya berakhir dengan `hook probes: 2256 passed, 0 failed`,
    `AI config within budget`, dan `✓ All targets, orphans, and INDEX.md coverage are in sync`.
 
 **Tip:** commit lapisan hasil salinan dalam commit tersendiri; dengan begitu satu `git revert`
@@ -727,7 +727,7 @@ dipanggilnya.
 | [`ai-config.sh`](scripts/check/ai-config.sh) | Setiap aturan yang dikutip ada di `AGENTS.md`; konteks yang selalu dimuat di bawah 15.000 byte; pemasangan hook; pin MCP yang persis | Berjalan bila ada apa pun yang di-stage; `bash scripts/check/ai-config.sh` | Instruksi untuk agen tetap benar dan ringkas |
 | [`ai-config-probes.sh`](scripts/check/ai-config-probes.sh) | Membuktikan aturan pin MCP dari dua arah di repo sementara | Berjalan untuk kode yang di-stage | Pemeriksaan pin yang meloloskan versi bergerak gagal dengan jelas |
 | `workflows.sh --check` ([`workflows.sh`](scripts/sync/workflows.sh)) | Gagal bila salinan command atau baris `INDEX.md` melenceng dari `_workflow-source/` | Berjalan bila command di-stage | Setiap salinan command mengatakan hal yang sama |
-| [`hook-probes.sh`](scripts/check/hook-probes.sh) + [`hook-probes.tsv`](scripts/check/hook-probes.tsv) | Memberikan 1.772 probe ke hook seperti yang dilakukan Claude Code dan memeriksa setiap putusannya | Berjalan bila hook, `settings.json`, probe, atau file unlock di-stage; `bash scripts/check/hook-probes.sh` | Guard yang berhenti memblokir, atau mulai memblokir terlalu banyak, tertangkap |
+| [`hook-probes.sh`](scripts/check/hook-probes.sh) + [`hook-probes.tsv`](scripts/check/hook-probes.tsv) | Memberikan 2.256 probe ke hook seperti yang dilakukan Claude Code dan memeriksa setiap putusannya | Berjalan bila hook, `settings.json`, probe, atau file unlock di-stage; `bash scripts/check/hook-probes.sh` | Guard yang berhenti memblokir, atau mulai memblokir terlalu banyak, tertangkap |
 | [`skills.sh`](scripts/check/skills.sh) + [`.skillspector-baseline.yaml`](.skillspector-baseline.yaml) | SkillSpector, di-pin ke satu commit, atas command, agen, skill, dan hook | Berjalan bila command atau hook di-stage; `bash scripts/check/skills.sh --staged` | Baris prompt injection atau langkah shell yang tidak aman tertangkap seperti dependensi yang buruk |
 
 Yang berikut hanya berjalan di gate pull request,
@@ -863,8 +863,9 @@ dilakukan:
 | Branch yang dilindungi | Push ke, atau penghapusan, `dev`, `prod`, `main`, atau `master`; `gh pr merge --delete-branch` | Push branch kerja dan buka pull request; push rilis Anda jalankan sendiri dengan `!` |
 | Rahasia | Pembacaan atau penulisan shell apa pun atas file `.env*` asli atau cadangannya: `cat`, `grep -r`, redirect, salinan, `python -c`, `bun -e` yang mencetak apa yang dimuat bun, termasuk di dalam wrapper atau package runner | `bash scripts/env/show.sh <file>` (tersamar); `scripts/env/set.sh` saat kunci terbuka |
 | Unlock | Agen menjalankan `unlock.sh` atau script `unlock` secara langsung, lewat shell, wrapper, package runner, alias git, atau `find -exec`, atau menulis di bawah `.claude/state/unlock/` | Anda yang menjalankan `! bun unlock env` |
+| Guard itu sendiri | Perubahan lewat shell pada hook, `scripts/check/hook-probes.*`, `unlock.sh`, `scripts/env/`, atau pengaturan yang menyalakan guard: `rm`, `mv`, `cp` yang menimpa, redirect, `sed -i`, `chmod`, `git checkout` | Edit tool, yang bertanya dulu kepada Anda; atau jalankan sendiri dengan `!` |
 | Pengaturan git yang mengubah perilaku | Alias, include, perintah yang dijalankan git (`core.sshCommand`, `core.fsmonitor`, pager yang bukan penampil biasa, credential helper), proxy, atau `url.*.insteadOf`, yang diset dengan `-c` atau `GIT_CONFIG_*` atau ditulis dengan `git config` | Anda yang mengesetnya sendiri; `user.*`, `color.*`, dan pager `less` tetap terbuka |
-| Apa pun yang tidak bisa diurai | `eval` atau kode yang di-decode, `cat x \| sh`, `$( )` sebagai nama perintah atau operand file, path yang disusun lewat `IFS` atau array, perintah package runner yang disusun dari `$( )`, kode inline yang membuka file, `xargs` ke program pembaca | Jalankan sendiri dengan `!` bila memang dimaksudkan |
+| Apa pun yang tidak bisa diurai | `eval` atau kode yang di-decode, `cat x \| sh`, `$( )` sebagai nama perintah atau operand file, path yang disusun lewat `IFS` atau array, perintah package runner yang disusun dari `$( )`, kode inline yang membuka atau mengubah file, `xargs` ke program pembaca atau pengubah | Jalankan sendiri dengan `!` bila memang dimaksudkan |
 
 **Wrapper dan package runner dikupas.** `env`, `sudo`, `timeout`, `nice`, `xargs`, dan wrapper umum
 lainnya dikupas, begitu juga `npx`, `bunx`, `pnpx`, serta bentuk `exec`, `dlx`, dan `x` dari `npm`,
@@ -882,14 +883,16 @@ banyak adalah harga yang memang disengaja. Satu-satunya daftar file yang boleh d
 pembaca dari substitusi adalah `git ls-files` atau `git diff --name-only` polos, karena git
 mengonfirmasinya lebih dulu: `cat $(git ls-files '*.md')` tetap berjalan. Tanpa python3 hanya
 beberapa aturan teks polos yang berlaku (push ke branch yang dilindungi, hapus rekursif, hard reset
-atau clean paksa, gate yang dilewati, nama `.env*`, dan unlock), jadi pasanglah python3.
+atau clean paksa, gate yang dilewati, nama `.env*`, unlock, `scripts/env/`, file yang menyalakan
+guard, dan skrip guard itu sendiri), jadi pasanglah python3.
 
 **Sandbox di bawah hook, aktif secara default.** `.claude/settings.json` menyalakan
 [sandbox Bash milik Claude Code](https://code.claude.com/docs/en/sandboxing), dengan
 `sandbox.enabled` bernilai `true`. Sistem operasi lalu menghentikan setiap perintah yang
 di-sandbox, beserta apa pun yang dijalankannya, dari membaca file `.env*` atau cadangannya dan dari
-menulis di bawah `.claude/state/unlock/`, bagaimanapun baris perintahnya disusun. Hanya
-`scripts/env/show.sh` dan `scripts/env/set.sh` yang berjalan di luarnya.
+menulis di bawah `.claude/state/unlock/` atau `.claude/hooks/` atau ke `scripts/ops/unlock.sh`,
+bagaimanapun baris perintahnya disusun. Hanya `scripts/env/show.sh` dan `scripts/env/set.sh` yang
+berjalan di luarnya.
 
 - **Di mana ia berjalan**: macOS apa adanya; Linux dan WSL2 dengan `bubblewrap` dan `socat`
   terpasang; tidak di WSL1 atau Windows native. Bila sandbox tidak bisa dimulai, Claude Code
@@ -904,10 +907,10 @@ menulis di bawah `.claude/state/unlock/`, bagaimanapun baris perintahnya disusun
 **Batas yang diketahui.** Aplikasi membaca `.env` saat berjalan, dan output-nya sendiri bisa
 memperlihatkan sebuah nilai. File skrip yang ditulis lalu dijalankan Claude dieksekusi, bukan
 dibaca. Program yang tidak dikenal hook dan menjalankan perintahnya sendiri (`watch`, `script`,
-`flock`, `parallel`) hanya dinilai dari namanya. Hook adalah file di repo yang bisa diubah lewat
-shell. Di tempat sandbox berjalan, sandbox tetap menjaga file `.env*` dan file unlock dari tiga hal
-terakhir itu. [docs/unlock.md](docs/unlock.md#what-the-lock-does-not-stop) memuat daftar
-lengkapnya.
+`flock`, `parallel`) hanya dinilai dari namanya. Di tempat sandbox berjalan, sandbox tetap menjaga
+file `.env*` dan file unlock dari dua hal terakhir itu. Shell tidak bisa mengubah hook, probe, atau
+skrip unlock; Edit tool bisa, setelah `.claude/settings.json` bertanya kepada Anda.
+[docs/unlock.md](docs/unlock.md#what-the-lock-does-not-stop) memuat daftar lengkapnya.
 
 Setiap aturan dibuktikan dari dua arah, apa yang harus dihentikan dan apa yang harus diloloskan,
 oleh `bash scripts/check/hook-probes.sh`, juga di bawah bash 3.2 milik macOS.
@@ -1255,9 +1258,9 @@ menguji jalur deploy dengan cara itu; merge ke `prod` benar-benar men-deploy dan
   (masukan rusak, python3 yang hilang, proses yang macet), dan setiap hook umpan balik diam saat
   gagal. [Tabel mode gagal](.claude/hooks/README.md#fail-modes) mendaftar setiap kasusnya.
 - **Setiap aturan dibuktikan dari dua arah, dan Anda bisa mengauditnya.**
-  `bash scripts/check/hook-probes.sh` menjalankan 1.772 probe.
-  [`scripts/check/hook-probes.tsv`](scripts/check/hook-probes.tsv) berisi 598 probe perintah untuk
-  `safety-check.sh` (402 harus diblokir, 196 harus lolos); harness-nya menambahkan hook lain, mode
+  `bash scripts/check/hook-probes.sh` menjalankan 2.256 probe.
+  [`scripts/check/hook-probes.tsv`](scripts/check/hook-probes.tsv) berisi 808 probe perintah untuk
+  `safety-check.sh` (540 harus diblokir, 268 harus lolos); harness-nya menambahkan hook lain, mode
   gagal, worktree yang ditautkan, dan gate mode plugin.
   [`ai-config-probes.sh`](scripts/check/ai-config-probes.sh) dan
   [`diff-scan-probes.sh`](.github/scripts/diff-scan-probes.sh) membuktikan pemeriksaannya dengan
@@ -1283,11 +1286,11 @@ yang menganggur lebih cepat:
 | Konteks yang dimuat setiap sesi | 13.114 byte: `CLAUDE.md` (8.836) dan `common/working-agreements.md` (4.278); `ai-config.sh` gagal di atas 15.000 |
 | Aturan yang hanya dimuat untuk file yang cocok | 11 file, total 39.715 byte, masing-masing hanya saat Claude mengerjakan file yang disebutnya |
 | Deskripsi command dan agen yang didaftar Claude Code | 2.982 byte untuk 15 command dan reviewer |
-| `safety-check.sh` untuk satu perintah | sekitar 140 ms: `git status`, force-push yang ditolak, dan test run dengan pipe sama saja |
+| `safety-check.sh` untuk satu perintah | sekitar 165 ms: `git status`, force-push yang ditolak, dan test run dengan pipe sama saja (140 ms sebelum aturan skrip guard, yang menambah sekitar 17%; versi lama dan baru dijalankan berdampingan) |
 | `db-guard.sh`, `mcp-guard.sh`, `migration-guard.sh` | sekitar 85 sampai 105 ms masing-masing |
 | `post-edit.sh` tanpa formatter terpasang | sekitar 115 ms; formatter atau linter menambah waktunya sendiri (timeout 60 detik) |
 | `post-commit.sh`, `prompt-intent.sh`, `session-start.sh` | sekitar 60 sampai 85 ms masing-masing |
-| `hook-probes.sh` | 1.772 probe dalam 4 menit 23 detik |
+| `hook-probes.sh` | 2.256 probe dalam 9 menit 39 detik |
 | Pre-commit | kode yang di-stage menjalankan setiap gate kecuali probe hook; probe itu hanya berjalan bila file hook di-stage |
 | CI | hanya pada pull request: tidak ada saat push, tidak ada yang terjadwal; `workflows-lint` hanya bila `.github/**` berubah |
 
@@ -1498,7 +1501,7 @@ ada yang membaca izin dari chat.
 
 **Apakah hook berfungsi dengan bash 3.2 milik macOS?**
 Ya. Hook ditulis untuk bash 3.2, dan `/bin/bash scripts/check/hook-probes.sh` membuktikannya:
-1.772 lolos, 0 gagal di `/bin/bash` 3.2.57 milik macOS. macOS tidak punya perintah `timeout`;
+2.256 lolos, 0 gagal di `/bin/bash` 3.2.57 milik macOS. macOS tidak punya perintah `timeout`;
 `lib.sh` menghentikan proses yang lambat dengan sendirinya.
 
 **Apa yang terjadi tanpa jq atau python3?**

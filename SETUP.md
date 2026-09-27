@@ -271,8 +271,11 @@ your own machine:
 
 ```bash
 chmod +x .claude/hooks/*.sh scripts/ops/unlock.sh scripts/env/*.sh scripts/check/hook-probes.sh
-bash scripts/check/hook-probes.sh   # every rule, both ways, in temp folders; about three minutes
+bash scripts/check/hook-probes.sh   # every rule, both ways, in temp folders; about ten minutes
 ```
+
+Run the `chmod` line yourself (in your terminal, or with `!`): once the hooks are wired they refuse
+it from Claude, because it changes a guard script.
 
 On macOS, `/bin/bash scripts/check/hook-probes.sh` proves the hooks under bash 3.2.
 
@@ -368,7 +371,7 @@ anything it starts:
   included, at any depth) and the backups in `.claude/state/env-backups/`; `allowRead` reopens the
   `*.example` templates.
 - `sandbox.filesystem.denyWrite` closes `.claude/state/unlock/`, so no sandboxed command can write
-  an unlock.
+  an unlock, and `.claude/hooks/` and `scripts/ops/unlock.sh`, so none can rewrite a guard.
 - `sandbox.excludedCommands` lets only `scripts/env/show.sh` and `scripts/env/set.sh` run outside
   it, since those two must reach `.env` files.
 
