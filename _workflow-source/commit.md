@@ -9,7 +9,8 @@ description: Run the quality gates, inspect the staged changes, and draft a comm
 
 1. **Quality Gate**: run `/check-fix` first. Do not proceed from a broken state.
 
-2. **Inspect**: `git diff --staged` and `git status`, read unfiltered.
+2. **Inspect**: `git diff --staged` and `git status`, read whole (with RTK installed,
+   `rtk proxy git diff --staged` and `rtk proxy git status`: its rewrite condenses both).
    - **Never commit**: `.env*` (except the `.example` templates), or `openapi.json` when it was not
      regenerated from the source of truth (`bun run spec:export`).
    - `.claude/settings.json` goes in a commit of its own, together with the hooks it wires, never
