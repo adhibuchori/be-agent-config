@@ -39,6 +39,18 @@ skip() {
   skipped="${skipped}"$'\n'"  $1 — $2"
 }
 
+# An optional module (the payload contract) runs here exactly when scripts/check/gates.list lists
+# it, so deleting its lines there switches it off in both places.
+optional() {
+  local name="$1" script="$2"
+  if grep -qE "^[^#].*run ${script}\$" scripts/check/gates.list 2>/dev/null; then
+    run "$name" bun run "$script"
+  else
+    step "$name"
+    echo "$script is not in scripts/check/gates.list - optional module not adopted"
+  fi
+}
+
 git rev-parse --verify "$BASE" >/dev/null 2>&1 || {
   echo "::error::base ref '$BASE' not found; run: git fetch origin"
   exit 1
@@ -64,6 +76,14 @@ run "Unit Tests (coverage)" bun run test:coverage
 # A role or queue name retyped instead of imported never fails loudly at runtime.
 # The words are read out of each home, so a rename is picked up here automatically.
 run "Constant Home Check" bun run check:constants
+
+# The image builds what this gate validated: generated clients, a readable digest pin, and a Bun no
+# older than the one this gate ran.
+run "Dockerfile Check" bun run check:dockerfile
+# The committed openapi.json describes every route the app mounts.
+run "OpenAPI Document Check" bun run check:openapi
+optional "Payload Endpoint Registry Check" check:endpoints
+optional "Payload Crypto Interop Check" check:crypto-interop
 
 # A stale copy under .claude/commands/ still reads as valid, and INDEX.md is what an agent
 # consults to discover the commands at all. The script skips a branch without the sources.
