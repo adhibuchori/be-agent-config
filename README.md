@@ -44,7 +44,7 @@ request runs the same checks. Each refusal says why and what to do instead.
 - [How it fits together](#how-it-fits-together)
 - [Everything this template ships](#everything-this-template-ships)
 - [What gets blocked](#what-gets-blocked)
-- [Configuration](#configuration)
+- [Configuration](#configuration) · [Using RTK](#using-rtk)
 - [Unlocking `.env` and the production DB](#unlocking-env-and-the-production-db)
 - [CI/CD](#cicd)
 - [GitHub repository configuration](#github-repository-configuration)
@@ -430,7 +430,7 @@ entries from `.claude/settings.json`.
    bash scripts/sync/workflows.sh --check   # the command mirrors match their sources
    ```
 
-   In a fresh copy they end with `hook probes: 2256 passed, 0 failed`,
+   In a fresh copy they end with `hook probes: 2330 passed, 0 failed`,
    `AI config within budget`, and `✓ All targets, orphans, and INDEX.md coverage are in sync`.
 
 **Tip:** commit the copied layer in a commit of its own; then one `git revert` takes it out again
@@ -688,7 +688,7 @@ its own with `--only` and a part of its command, for example
 | [`.husky/pre-commit`](.husky/pre-commit) | Runs the gate runner on the staged files | Runs by itself on `git commit` once `bun install` ran husky's `prepare` | Nothing lands unchecked; the safety hook refuses `--no-verify` from the agent |
 | [`gates.sh`](scripts/check/gates.sh) + [`gates.list`](scripts/check/gates.list) | Runs the list: one log per gate, a table at the end, the tail of each failure. `--hook`, `--paths`, `--only`, `--fix`, `--fail-fast` | `bash scripts/check/gates.sh` | One list for your machine, the hook and the agent |
 | `@format` | Read-only format and lint check with oxfmt and `oxlint --type-aware` | Runs when anything is staged; `bash scripts/check/gates.sh --only @format` | Unformatted files and a missing `await` on a query never land |
-| `gitleaks git --staged` ([`.gitleaks.toml`](.gitleaks.toml)) | Scans the staged diff for secrets | Runs when anything is staged | A key is stopped before the commit exists |
+| [`secrets.sh`](scripts/check/secrets.sh) ([`.gitleaks.toml`](.gitleaks.toml)) | Scans the staged diff for secrets with gitleaks; fails when gitleaks is missing, warns when its release is not CI's pin | Runs when anything is staged | A key is stopped before the commit exists |
 | `bun run type-check` | `tsc --noEmit` | Runs for staged code | Type errors never reach review |
 | `bun run check:dead-code` ([`knip.ts`](knip.ts)) | Knip: unused files, exports and dependencies | Runs for staged code | Dead code is deleted, not carried |
 | [`constants.ts`](scripts/check/constants.ts) + [`constants.config.json`](scripts/check/constants.config.json) | A role, queue or cache name retyped instead of imported from its one home | Runs for staged code; fill the config first (SETUP §6) | A rename cannot miss a copy |
@@ -696,11 +696,11 @@ its own with `--only` and a part of its command, for example
 | [`double-assertion.sh`](scripts/check/double-assertion.sh) | Refuses `x as unknown as T` | Runs for staged code | The compiler's overlap check stays on |
 | [`folder-shape.mjs`](scripts/check/folder-shape.mjs) | A file whose path does not say what it does (SHAPE-1 to SHAPE-4) | Runs for staged code | Files are where you would guess |
 | [`coverage-policy.mjs`](scripts/check/coverage-policy.mjs) | Refuses a lowered threshold, a narrowed scope or an exemption without a reason | Runs for staged code | 100% keeps meaning 100% |
-| `bun run test:coverage` + [`coverage-files.mjs`](scripts/check/coverage-files.mjs) | The suite with coverage, and every source file loaded by at least one test | Runs for staged code | A handler with no test at all cannot pass |
+| [`ci-env.sh`](scripts/check/ci-env.sh) `bun run test:coverage` + [`coverage-files.mjs`](scripts/check/coverage-files.mjs) | The suite with coverage, and every source file loaded by at least one test, run with exactly CI's variables (the workflow's job-level `env:` block) and nothing from your shell or a `.env` file | Runs for staged code; one file: `bash scripts/check/ci-env.sh bun test <path>` | A handler with no test cannot pass, and a test that only passes on your local credentials fails before CI |
 | [`ai-config.sh`](scripts/check/ai-config.sh) | Every cited rule exists in `AGENTS.md`; always-loaded context under 15,000 bytes; hook wiring; exact MCP pins | Runs when anything is staged; `bash scripts/check/ai-config.sh` | The agent's instructions stay true and small |
 | [`ai-config-probes.sh`](scripts/check/ai-config-probes.sh) | Proves the MCP pin rule both ways in a temp repo | Runs for staged code | A pin check that lets a moving version through fails loudly |
 | `workflows.sh --check` ([`workflows.sh`](scripts/sync/workflows.sh)) | Fails when a command mirror or `INDEX.md` row drifted from `_workflow-source/` | Runs when commands are staged | Every copy of a command says the same thing |
-| [`hook-probes.sh`](scripts/check/hook-probes.sh) + [`hook-probes.tsv`](scripts/check/hook-probes.tsv) | Feeds 2,256 probes to the hooks as Claude Code would and checks each verdict | Runs when a hook, `settings.json`, the probes or the unlock files are staged; `bash scripts/check/hook-probes.sh` | A guard that stopped blocking, or started blocking too much, is caught |
+| [`hook-probes.sh`](scripts/check/hook-probes.sh) + [`hook-probes.tsv`](scripts/check/hook-probes.tsv) | Feeds 2,330 probes to the hooks as Claude Code would and checks each verdict | Runs when a hook, `settings.json`, the probes or the unlock files are staged; `bash scripts/check/hook-probes.sh` | A guard that stopped blocking, or started blocking too much, is caught |
 | [`skills.sh`](scripts/check/skills.sh) + [`.skillspector-baseline.yaml`](.skillspector-baseline.yaml) | SkillSpector, pinned to one commit, over commands, agents, skills and hooks | Runs when commands or hooks are staged; `bash scripts/check/skills.sh --staged` | A prompt-injection line or an unsafe shell step is caught like a bad dependency |
 
 These run only in the pull-request gate, [`.github/scripts/quality-gate.sh`](.github/scripts/quality-gate.sh),
@@ -909,6 +909,21 @@ Two optional environment variables: `AGENT_WORKSPACE_ROOT` turns on multi-repo m
 that holds several repositories, and `AGENT_HOOK_STATE_DIR` moves the hooks' per-session state.
 [The hook reference](.claude/hooks/README.md#configuration) explains both. Step-by-step recipes
 that use these keys are in [Customize it](#customize-it).
+
+### Using RTK
+
+[RTK](https://github.com/rtk-ai/rtk) is an optional command-line proxy that shortens command output
+before the agent reads it; its Claude Code hook rewrites `git diff` into `rtk git diff`. This
+template never installs it and works the same without it.
+
+- **The guards see through it.** `safety-check.sh` reads `rtk <command>` and `rtk proxy <command>`
+  as the command they run, so `rtk git push --force origin main` is refused like the plain push. 37
+  rows in `scripts/check/hook-probes.tsv` prove it both ways.
+- **Exact-output steps bypass it.** A step that decides from what a command prints (an empty diff,
+  the whole diff a review reads, CI status) must see all of it, and RTK's summary can drop lines or
+  print one for an empty diff. The gates run inside scripts (`gates.sh`, `pr-ready.sh`,
+  `secrets.sh`, `ci-env.sh`), which RTK never rewrites; where a command or agent runs `git`, `grep`
+  or `gh` itself, it says to use `rtk proxy <command>` when RTK is installed.
 
 ## Unlocking `.env` and the production DB
 
@@ -1211,8 +1226,8 @@ deploy path that way; a merge into `prod` deploys and strips for real.
   each feedback hook stays silent on failure. The
   [fail-mode table](.claude/hooks/README.md#fail-modes) lists every case.
 - **Every rule is proven both ways, and you can audit it.** `bash scripts/check/hook-probes.sh`
-  runs 2,256 probes. [`scripts/check/hook-probes.tsv`](scripts/check/hook-probes.tsv) holds the
-  808 command probes for `safety-check.sh` (540 must block, 268 must pass); the harness adds the
+  runs 2,330 probes. [`scripts/check/hook-probes.tsv`](scripts/check/hook-probes.tsv) holds the
+  845 command probes for `safety-check.sh` (569 must block, 276 must pass); the harness adds the
   other hooks, the fail modes, a linked worktree and the plugin-mode gate.
   [`ai-config-probes.sh`](scripts/check/ai-config-probes.sh) and
   [`diff-scan-probes.sh`](.github/scripts/diff-scan-probes.sh) prove their checks the same way.
@@ -1240,7 +1255,7 @@ runs per hook, while other jobs kept the load average near 6, so an idle machine
 | `db-guard.sh`, `mcp-guard.sh`, `migration-guard.sh` | about 85 to 105 ms each |
 | `post-edit.sh` with no formatter installed | about 115 ms; a formatter or linter adds its own time (60 s timeout) |
 | `post-commit.sh`, `prompt-intent.sh`, `session-start.sh` | about 60 to 85 ms each |
-| `hook-probes.sh` | 2,256 probes in 9 min 39 s |
+| `hook-probes.sh` | 2,330 probes in 9 min 17 s |
 | Pre-commit | staged code runs every gate except the hook probes; those run only when a hook file is staged |
 | CI | only on pull requests: nothing on push, nothing on a schedule; `workflows-lint` only when `.github/**` changes |
 
@@ -1437,7 +1452,7 @@ permission from the chat.
 
 **Do the hooks work with macOS's bash 3.2?**
 Yes. They are written for bash 3.2, and `/bin/bash scripts/check/hook-probes.sh` proves it:
-2,256 passed, 0 failed on macOS `/bin/bash` 3.2.57. macOS has no `timeout` command; `lib.sh`
+2,330 passed, 0 failed on macOS `/bin/bash` 3.2.57. macOS has no `timeout` command; `lib.sh`
 stops a slow process itself.
 
 **What happens without jq or python3?**
@@ -1571,9 +1586,11 @@ be-agent-config/
 │   │                            ai-config-probes.sh: the MCP pin rule, proven both ways
 │   │                            hook-probes.sh + hook-probes.tsv: every hook rule, both ways
 │   │                            skills.sh: SkillSpector over commands, agents and hooks
+│   │                            secrets.sh: gitleaks over the staged diff
 │   │                            migrations.sh: schema-vs-migration drift
 │   │                            index-coverage.sh: foreign-key index coverage
 │   │                            coverage-policy.mjs · coverage-files.mjs: the 100% gate
+│   │                            ci-env.sh: the unit tests with CI's variables only
 │   │                            module-mocks.ts · constants.ts + constants.config.json
 │   │                            folder-shape.mjs · double-assertion.sh
 │   ├── ops/                     unlock.sh: your temporary unlock (env, db)

@@ -46,7 +46,7 @@ sebaiknya dilakukan.
 - [Bagaimana bagian-bagiannya saling terhubung](#bagaimana-bagian-bagiannya-saling-terhubung)
 - [Semua isi template ini](#semua-isi-template-ini)
 - [Apa yang diblokir](#apa-yang-diblokir)
-- [Konfigurasi](#konfigurasi)
+- [Konfigurasi](#konfigurasi) · [Memakai RTK](#memakai-rtk)
 - [Membuka kunci `.env` dan DB produksi](#membuka-kunci-env-dan-db-produksi)
 - [CI/CD](#cicd)
 - [Konfigurasi repositori GitHub](#konfigurasi-repositori-github)
@@ -451,7 +451,7 @@ hapus entri `"hooks"` itu dari `.claude/settings.json`.
    bash scripts/sync/workflows.sh --check   # salinan command cocok dengan sumbernya
    ```
 
-   Di salinan yang masih baru, ketiganya berakhir dengan `hook probes: 2256 passed, 0 failed`,
+   Di salinan yang masih baru, ketiganya berakhir dengan `hook probes: 2330 passed, 0 failed`,
    `AI config within budget`, dan `✓ All targets, orphans, and INDEX.md coverage are in sync`.
 
 **Tip:** commit lapisan hasil salinan dalam commit tersendiri; dengan begitu satu `git revert`
@@ -715,7 +715,7 @@ dipanggilnya.
 | [`.husky/pre-commit`](.husky/pre-commit) | Menjalankan gate runner atas file yang di-stage | Berjalan sendiri saat `git commit` setelah `bun install` menjalankan `prepare` milik husky | Tidak ada yang masuk tanpa diperiksa; hook safety menolak `--no-verify` dari agen |
 | [`gates.sh`](scripts/check/gates.sh) + [`gates.list`](scripts/check/gates.list) | Menjalankan daftar: satu log per gate, tabel di akhir, ekor setiap kegagalan. `--hook`, `--paths`, `--only`, `--fix`, `--fail-fast` | `bash scripts/check/gates.sh` | Satu daftar untuk mesin Anda, hook, dan agen |
 | `@format` | Pemeriksaan format dan lint baca-saja dengan oxfmt dan `oxlint --type-aware` | Berjalan bila ada apa pun yang di-stage; `bash scripts/check/gates.sh --only @format` | File yang belum diformat dan `await` yang hilang pada query tidak pernah masuk |
-| `gitleaks git --staged` ([`.gitleaks.toml`](.gitleaks.toml)) | Memindai diff yang di-stage untuk mencari rahasia | Berjalan bila ada apa pun yang di-stage | Sebuah key dihentikan sebelum commit-nya ada |
+| [`secrets.sh`](scripts/check/secrets.sh) ([`.gitleaks.toml`](.gitleaks.toml)) | Memindai diff yang di-stage untuk mencari rahasia dengan gitleaks; gagal bila gitleaks tidak ada, memberi peringatan bila rilisnya bukan pin CI | Berjalan bila ada apa pun yang di-stage | Sebuah key dihentikan sebelum commit-nya ada |
 | `bun run type-check` | `tsc --noEmit` | Berjalan untuk kode yang di-stage | Error tipe tidak pernah sampai ke review |
 | `bun run check:dead-code` ([`knip.ts`](knip.ts)) | Knip: file, export, dan dependensi yang tidak terpakai | Berjalan untuk kode yang di-stage | Kode mati dihapus, bukan dibawa-bawa |
 | [`constants.ts`](scripts/check/constants.ts) + [`constants.config.json`](scripts/check/constants.config.json) | Nama role, queue, atau cache yang diketik ulang alih-alih diimpor dari satu rumahnya | Berjalan untuk kode yang di-stage; isi config-nya dulu (SETUP §6) | Penggantian nama tidak bisa melewatkan satu salinan pun |
@@ -723,11 +723,11 @@ dipanggilnya.
 | [`double-assertion.sh`](scripts/check/double-assertion.sh) | Menolak `x as unknown as T` | Berjalan untuk kode yang di-stage | Pemeriksaan overlap milik compiler tetap aktif |
 | [`folder-shape.mjs`](scripts/check/folder-shape.mjs) | File yang path-nya tidak menyatakan fungsinya (SHAPE-1 sampai SHAPE-4) | Berjalan untuk kode yang di-stage | File berada di tempat yang Anda tebak |
 | [`coverage-policy.mjs`](scripts/check/coverage-policy.mjs) | Menolak ambang yang diturunkan, cakupan yang dipersempit, atau pengecualian tanpa alasan | Berjalan untuk kode yang di-stage | 100% tetap berarti 100% |
-| `bun run test:coverage` + [`coverage-files.mjs`](scripts/check/coverage-files.mjs) | Seluruh tes dengan coverage, dan setiap file sumber dimuat oleh minimal satu tes | Berjalan untuk kode yang di-stage | Handler tanpa satu tes pun tidak bisa lolos |
+| [`ci-env.sh`](scripts/check/ci-env.sh) `bun run test:coverage` + [`coverage-files.mjs`](scripts/check/coverage-files.mjs) | Seluruh tes dengan coverage, dan setiap file sumber dimuat oleh minimal satu tes, dijalankan persis dengan variabel CI (blok `env:` level job di workflow) tanpa apa pun dari shell Anda atau file `.env` | Berjalan untuk kode yang di-stage; satu file: `bash scripts/check/ci-env.sh bun test <path>` | Handler tanpa tes tidak bisa lolos, dan tes yang hanya lolos dengan kredensial lokal Anda gagal sebelum CI |
 | [`ai-config.sh`](scripts/check/ai-config.sh) | Setiap aturan yang dikutip ada di `AGENTS.md`; konteks yang selalu dimuat di bawah 15.000 byte; pemasangan hook; pin MCP yang persis | Berjalan bila ada apa pun yang di-stage; `bash scripts/check/ai-config.sh` | Instruksi untuk agen tetap benar dan ringkas |
 | [`ai-config-probes.sh`](scripts/check/ai-config-probes.sh) | Membuktikan aturan pin MCP dari dua arah di repo sementara | Berjalan untuk kode yang di-stage | Pemeriksaan pin yang meloloskan versi bergerak gagal dengan jelas |
 | `workflows.sh --check` ([`workflows.sh`](scripts/sync/workflows.sh)) | Gagal bila salinan command atau baris `INDEX.md` melenceng dari `_workflow-source/` | Berjalan bila command di-stage | Setiap salinan command mengatakan hal yang sama |
-| [`hook-probes.sh`](scripts/check/hook-probes.sh) + [`hook-probes.tsv`](scripts/check/hook-probes.tsv) | Memberikan 2.256 probe ke hook seperti yang dilakukan Claude Code dan memeriksa setiap putusannya | Berjalan bila hook, `settings.json`, probe, atau file unlock di-stage; `bash scripts/check/hook-probes.sh` | Guard yang berhenti memblokir, atau mulai memblokir terlalu banyak, tertangkap |
+| [`hook-probes.sh`](scripts/check/hook-probes.sh) + [`hook-probes.tsv`](scripts/check/hook-probes.tsv) | Memberikan 2.330 probe ke hook seperti yang dilakukan Claude Code dan memeriksa setiap putusannya | Berjalan bila hook, `settings.json`, probe, atau file unlock di-stage; `bash scripts/check/hook-probes.sh` | Guard yang berhenti memblokir, atau mulai memblokir terlalu banyak, tertangkap |
 | [`skills.sh`](scripts/check/skills.sh) + [`.skillspector-baseline.yaml`](.skillspector-baseline.yaml) | SkillSpector, di-pin ke satu commit, atas command, agen, skill, dan hook | Berjalan bila command atau hook di-stage; `bash scripts/check/skills.sh --staged` | Baris prompt injection atau langkah shell yang tidak aman tertangkap seperti dependensi yang buruk |
 
 Yang berikut hanya berjalan di gate pull request,
@@ -942,6 +942,22 @@ Dua environment variable opsional: `AGENT_WORKSPACE_ROOT` menyalakan mode multi-
 yang berisi beberapa repositori, dan `AGENT_HOOK_STATE_DIR` memindahkan state per sesi milik hook.
 [Referensi hook](.claude/hooks/README.md#configuration) menjelaskan keduanya. Resep langkah demi
 langkah yang memakai key-key ini ada di [Kustomisasi](#kustomisasi).
+
+### Memakai RTK
+
+[RTK](https://github.com/rtk-ai/rtk) adalah proxy command line opsional yang memendekkan output
+perintah sebelum dibaca agen; hook Claude Code miliknya menulis ulang `git diff` menjadi `rtk git
+diff`. Template ini tidak pernah memasangnya dan bekerja sama saja tanpanya.
+
+- **Guard melihat menembusnya.** `safety-check.sh` membaca `rtk <perintah>` dan `rtk proxy
+  <perintah>` sebagai perintah yang dijalankannya, jadi `rtk git push --force origin main` ditolak
+  sama seperti push biasa. 37 baris di `scripts/check/hook-probes.tsv` membuktikannya ke dua arah.
+- **Langkah yang butuh output persis melewatinya.** Langkah yang memutuskan dari apa yang dicetak
+  sebuah perintah (diff kosong, seluruh diff yang dibaca review, status CI) harus melihat semuanya,
+  sedangkan ringkasan RTK bisa membuang baris atau mencetak satu baris untuk diff kosong. Gate
+  berjalan di dalam skrip (`gates.sh`, `pr-ready.sh`, `secrets.sh`, `ci-env.sh`), yang tidak pernah
+  ditulis ulang RTK; bila sebuah command atau agen menjalankan `git`, `grep`, atau `gh` sendiri, ia
+  meminta `rtk proxy <perintah>` saat RTK terpasang.
 
 ## Membuka kunci `.env` dan DB produksi
 
@@ -1258,9 +1274,9 @@ menguji jalur deploy dengan cara itu; merge ke `prod` benar-benar men-deploy dan
   (masukan rusak, python3 yang hilang, proses yang macet), dan setiap hook umpan balik diam saat
   gagal. [Tabel mode gagal](.claude/hooks/README.md#fail-modes) mendaftar setiap kasusnya.
 - **Setiap aturan dibuktikan dari dua arah, dan Anda bisa mengauditnya.**
-  `bash scripts/check/hook-probes.sh` menjalankan 2.256 probe.
-  [`scripts/check/hook-probes.tsv`](scripts/check/hook-probes.tsv) berisi 808 probe perintah untuk
-  `safety-check.sh` (540 harus diblokir, 268 harus lolos); harness-nya menambahkan hook lain, mode
+  `bash scripts/check/hook-probes.sh` menjalankan 2.330 probe.
+  [`scripts/check/hook-probes.tsv`](scripts/check/hook-probes.tsv) berisi 845 probe perintah untuk
+  `safety-check.sh` (569 harus diblokir, 276 harus lolos); harness-nya menambahkan hook lain, mode
   gagal, worktree yang ditautkan, dan gate mode plugin.
   [`ai-config-probes.sh`](scripts/check/ai-config-probes.sh) dan
   [`diff-scan-probes.sh`](.github/scripts/diff-scan-probes.sh) membuktikan pemeriksaannya dengan
@@ -1290,7 +1306,7 @@ yang menganggur lebih cepat:
 | `db-guard.sh`, `mcp-guard.sh`, `migration-guard.sh` | sekitar 85 sampai 105 ms masing-masing |
 | `post-edit.sh` tanpa formatter terpasang | sekitar 115 ms; formatter atau linter menambah waktunya sendiri (timeout 60 detik) |
 | `post-commit.sh`, `prompt-intent.sh`, `session-start.sh` | sekitar 60 sampai 85 ms masing-masing |
-| `hook-probes.sh` | 2.256 probe dalam 9 menit 39 detik |
+| `hook-probes.sh` | 2.330 probe dalam 9 menit 17 detik |
 | Pre-commit | kode yang di-stage menjalankan setiap gate kecuali probe hook; probe itu hanya berjalan bila file hook di-stage |
 | CI | hanya pada pull request: tidak ada saat push, tidak ada yang terjadwal; `workflows-lint` hanya bila `.github/**` berubah |
 
@@ -1501,7 +1517,7 @@ ada yang membaca izin dari chat.
 
 **Apakah hook berfungsi dengan bash 3.2 milik macOS?**
 Ya. Hook ditulis untuk bash 3.2, dan `/bin/bash scripts/check/hook-probes.sh` membuktikannya:
-2.256 lolos, 0 gagal di `/bin/bash` 3.2.57 milik macOS. macOS tidak punya perintah `timeout`;
+2.330 lolos, 0 gagal di `/bin/bash` 3.2.57 milik macOS. macOS tidak punya perintah `timeout`;
 `lib.sh` menghentikan proses yang lambat dengan sendirinya.
 
 **Apa yang terjadi tanpa jq atau python3?**
@@ -1645,9 +1661,11 @@ be-agent-config/
 │   │                            ai-config-probes.sh: aturan pin MCP, dibuktikan dari dua arah
 │   │                            hook-probes.sh + hook-probes.tsv: setiap aturan hook, dua arah
 │   │                            skills.sh: SkillSpector atas command, agen, dan hook
+│   │                            secrets.sh: gitleaks atas diff yang di-stage
 │   │                            migrations.sh: drift skema terhadap migration
 │   │                            index-coverage.sh: cakupan index foreign key
 │   │                            coverage-policy.mjs · coverage-files.mjs: gate 100%
+│   │                            ci-env.sh: tes unit hanya dengan variabel CI
 │   │                            module-mocks.ts · constants.ts + constants.config.json
 │   │                            folder-shape.mjs · double-assertion.sh
 │   ├── ops/                     unlock.sh: pembukaan kunci sementara oleh Anda (env, db)

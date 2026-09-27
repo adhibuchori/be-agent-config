@@ -221,6 +221,10 @@ file shows the format). `safety-check.sh` peels a listed wrapper before judging 
 unlisted one hides the command it runs, so `<wrapper> git push origin main` would be judged as
 `<wrapper>`.
 
+RTK needs neither the rule nor an entry: its own hook adds the prefix, and `safety-check.sh` already
+reads `rtk <command>` and `rtk proxy <command>` as the command they run ([README § Using
+RTK](README.md#using-rtk)).
+
 None ships here: a wrapper is machine-local, and a rule pointing at a missing binary fails every
 command. It has to be a hard rule rather than a note, because a wrapper mentioned in passing gets
 dropped once a task gets busy, and half-wrapped commands make its numbers meaningless.
