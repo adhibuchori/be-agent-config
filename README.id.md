@@ -36,6 +36,7 @@ sebaiknya dilakukan.
 ## Daftar isi
 
 - [Mengapa template ini ada](#mengapa-template-ini-ada)
+- [Enkripsi payload](#enkripsi-payload-body-tersegel-dan-satu-registry-endpoint)
 - [Lihat cara kerjanya](#lihat-cara-kerjanya)
 - [Untuk siapa](#untuk-siapa)
 - [Template yang mana?](#template-yang-mana)
@@ -194,6 +195,108 @@ Inggris.
 
 </details>
 
+## Enkripsi payload: body tersegel dan satu registry endpoint
+
+Modul andalan, dan opsional. Setelah Anda mengadopsinya, setiap body request dan response yang
+melintasi batas layanan berjalan dalam keadaan tersegel, setiap route berada di satu registry dengan
+kebijakan enkripsinya di samping path-nya, dan dua gate menjaga keduanya tetap benar sebelum apa pun
+di-merge. Template frontend dan Python berbicara dengan format wire yang sama, dibuktikan dengan satu
+set test vector bersama. [`.claude/PAYLOAD-CONTRACT.md`](.claude/PAYLOAD-CONTRACT.md) adalah kontrak
+lengkapnya: model ancaman, format wire, kebijakan, aturan P1 sampai P10, kunci, dan cara
+memasangnya.
+
+**Cara kerjanya.** Body yang tersegel adalah envelope AES-256-GCM berisi enam field (`v`, `alg`,
+`kid`, `iv`, `ct`, `ts`), dikirim sebagai `application/vnd.payload-envelope+json`. Data
+terautentikasinya tidak pernah ikut dikirim: isinya method (atau status response), pola route di
+registry, id kunci, dan waktu penyegelan, sehingga envelope itu tidak bisa dibuka di route lain, dan
+envelope yang berselisih lebih dari 120 detik dengan jam penerima ditolak sebelum cipher berjalan.
+Dua server berbagi satu kunci AES-256 per hop (`kid:base64` dalam satu variabel; rotasi menambahkan
+`<NAME>_NEXT`), sedangkan browser menyepakati kunci baru per tab lewat ECDH P-256 dan HKDF-SHA-256,
+yang diturunkan ulang server di setiap request dan tidak pernah disimpan. Middleware membuka request
+sebelum validator mana pun berjalan dan menyegel response-nya, jadi handler, service, dan skema
+hanya melihat objek biasa. Registry di-generate dari `openapi.json`, dan sebuah route hanya bisa
+keluar dari `strict` lewat pengecualian di `payload.config.json` yang menyebut alasannya. Penolakan
+keluar sebagai problem+json teks biasa dengan kode `ENVELOPE_*`, dan kode status tetap terbaca tanpa
+dekripsi.
+
+1. **Client mengirim teks biasa ke route yang tersegel.**
+   *Masalahnya:* build lama atau skrip buatan tangan mengirim JSON biasa, dan jawabannya berjalan
+   tanpa enkripsi sementara request lain tersegel; tidak ada yang sadar, karena semuanya berfungsi.
+   *Solusinya:* middleware menolak body teks biasa di route yang tersegel dengan
+   `ENVELOPE_REQUIRED` sebelum handler mana pun berjalan, dan penolakannya membawa kode, tidak
+   pernah payload.
+   *Ditangani oleh:* [`payload.middleware.ts`](src/middlewares/payload.middleware.ts),
+   [`src/lib/payload/`](src/lib/payload/), `check:endpoints`.
+2. **Sebuah route dirilis tanpa kebijakan yang diputuskan.**
+   *Masalahnya:* route ditambahkan, path-nya diketik manual di dua tempat, dan tidak ada yang
+   memutuskan apakah body-nya disegel.
+   *Solusinya:* `bun run generate:endpoints` menulis registry dari spec; `check:endpoints` gagal
+   bila registry melenceng dari spec dan pengecualiannya, bila sebuah pengecualian tidak punya
+   alasan, dan bila path route diketik di `src/` di luar file yang boleh menyebut route.
+   *Ditangani oleh:* [`src/lib/endpoints/`](src/lib/endpoints/), `check:endpoints`.
+3. **Dua salinan cipher saling melenceng.**
+   *Masalahnya:* salinan milik frontend mengubah cara ia menyusun data terautentikasi; tes di kedua
+   repo tetap hijau, dan setiap request gagal di produksi dengan error yang tidak menjelaskan
+   apa-apa.
+   *Solusinya:* setiap salinan membuka ciphertext yang sama yang sudah di-commit dan menolak replay
+   yang sama, dan `check:crypto-interop` menyegel dengan satu salinan lalu membuka dengan salinan
+   lain bila sebuah peer di-checkout di samping repo ini.
+   *Ditangani oleh:* [`payload-vectors.json`](scripts/check/payload-vectors.json),
+   `check:crypto-interop`.
+4. **Saklar debugging terbawa ke produksi.**
+   *Masalahnya:* seseorang mematikan enkripsi untuk mengejar bug, dan branch-nya di-merge dalam
+   keadaan itu.
+   *Solusinya:* saklar yang di-commit harus bernilai `strict` (`check:endpoints`), service menolak
+   berjalan dengan `off` di produksi, dan debugging memakai `PAYLOAD_MODE=off` di shell Anda
+   sendiri.
+   *Ditangani oleh:* [`payload.config.json`](payload.config.json), `resolveEncryptionMode`,
+   `check:endpoints`.
+
+| Bagian | Fungsinya | Cara memakai | Mengapa membantu |
+| --- | --- | --- | --- |
+| [`src/lib/payload/`](src/lib/payload/) | Cipher (AES-256-GCM lewat WebCrypto), key ring dengan rotasi, kesepakatan kunci browser, saklar strict/off, dan pencocok endpoint, masing-masing dengan tesnya | Hanya diimpor oleh middleware, tidak pernah oleh handler, service, atau skema | Referensi yang sudah di-review, bukan kripto buatan sendiri |
+| [`payload.middleware.ts`](src/middlewares/payload.middleware.ts) | Membuka request yang tersegel, menyegel response, menolak teks biasa di route yang tersegel | `app.use(createPayloadMiddleware({ mode, registry: ENDPOINTS, prefixes: ENDPOINT_PREFIXES, keyRing }))` setelah body limit, rate limit, dan timeout, sebelum route | Tidak ada yang melewati tepi layanan pernah melihat envelope |
+| [`src/lib/endpoints/`](src/lib/endpoints/) | Setiap route beserta kebijakannya: route dari spec di-generate, sisanya ditulis manual, aturan prefix untuk catch-all seperti milik library auth | `bun run generate:endpoints` setelah spec berubah; jangan pernah mengedit `endpoints.generated.ts` | Setiap route punya kebijakan yang sudah diputuskan |
+| [`payload.config.json`](payload.config.json) | Saklar yang di-commit, pengecualian beserta alasannya, peer yang dibandingkan | Pertahankan `"encryption": "strict"`; tambahkan `"METHOD /pattern": { "encryption", "reason" }` di `exemptions` | Pengecualian enkripsi adalah satu baris yang di-review beserta alasannya |
+| `check:endpoints`, `check:crypto-interop` | Separuh statis kontrak ini, dan bukti bahwa salinan-salinannya sepakat ([Pemeriksaan dan gate](#pemeriksaan-dan-gate)) | Di `gates.list` dan gate pull request | Drift menggagalkan commit, bukan rilis |
+
+**Adopsi.** Mulai cepat sudah menyalin kontraknya, aturannya, dan kedua pemeriksaan beserta baris
+`gates.list`-nya. Salin modulnya dari root proyek Anda, dengan `CFG` diset seperti di
+[Mulai cepat](#mulai-cepat), lalu generate registry-nya:
+
+```bash
+cp "$CFG"/payload.config.json .
+mkdir -p src/lib src/middlewares/__tests__
+cp -R "$CFG"/src/lib/payload "$CFG"/src/lib/endpoints src/lib/
+cp "$CFG"/src/middlewares/payload.middleware.ts src/middlewares/
+cp "$CFG"/src/middlewares/__tests__/payload.middleware.test.ts src/middlewares/__tests__/
+bun run spec:export && bun run generate:endpoints
+```
+
+Pasang middleware seperti di tabel, lalu buat satu kunci per hop di mesin Anda sendiri, jangan pernah
+di chat. Setelah `! bun unlock env`, perintah ini mengisinya tanpa mencetaknya; pasang nilai yang
+sama di sisi lain hop itu:
+
+```bash
+printf 'k1:%s' "$(openssl rand -base64 32)" | bash scripts/env/set.sh .env.development PAYLOAD_KEY
+```
+
+Sebut repo lain di `peers` (`{ "name": "web", "root": "../web" }`), dan pemeriksaannya juga
+membandingkan spec, pengecualian, dan cipher itu sendiri setiap kali keduanya di-checkout
+berdampingan.
+
+**Tidak memakainya.** Hapus dua barisnya di `scripts/check/gates.list` dan tiga package script-nya
+(`check:endpoints`, `check:crypto-interop`, `generate:endpoints`), lalu file-file yang didaftar di
+bagian terakhir kontraknya. Gate pull request menjalankan kedua pemeriksaan itu hanya selama
+`gates.list` mendaftarnya.
+
+**Apa yang tidak dilakukannya.** Hop browser bukan enkripsi end-to-end: orang yang memakai browser
+memegang kuncinya. Yang didapat adalah integritas, pengikatan ke route, ketahanan terhadap replay di
+dalam jendela waktu, dan ciphertext di setiap log dan file HAR; kerahasiaan tetap datang dari TLS,
+cookie httpOnly, proxy di sisi server, dan `connect-src` yang ketat. Hop server-ke-server, yang
+kuncinya tidak pernah sampai ke browser, adalah pertahanan berlapis yang nyata bila melintasi
+jaringan yang bukan milik Anda.
+
 ## Lihat cara kerjanya
 
 <picture>
@@ -300,8 +403,8 @@ sistem Anda meminta gerak yang dikurangi (reduced motion), yang tampil adalah ga
 
 **Tidak cocok bila Anda:**
 
-- mencari proyek awal (starter): di sini tidak ada `src/`, `package.json`, atau skema, hanya
-  lapisan di sekitar kode Anda;
+- mencari proyek awal (starter): di sini tidak ada aplikasi, `package.json`, atau skema, hanya
+  lapisan di sekitar kode Anda dan modul payload yang opsional;
 - memakai stack lain: lihat [Template yang mana?](#template-yang-mana);
 - ingin update tanpa menyalin file lagi: pakai [plugin](#lebih-suka-plugin);
 - menginginkan batas keamanan terhadap agen yang berniat jahat: hook membaca teks perintah, dan
@@ -419,6 +522,9 @@ hapus entri `"hooks"` itu dari `.claude/settings.json`.
    mkdir -p docs && cp "$CFG"/docs/unlock.md docs/   # penolakan dari hook menautkan ke file ini
    ```
 
+   Aturan dan pemeriksaan kontrak payload yang opsional ikut bersama `.claude/` dan `scripts/`;
+   modulnya tetap di template sampai Anda mengadopsinya ([Enkripsi payload](#enkripsi-payload-body-tersegel-dan-satu-registry-endpoint)).
+
 3. **Gabungkan `.gitignore` sebelum commit pertama.** `.claude/settings.local.json`,
    `.claude/state/`, `.skillspector/`, dan setiap file `.env*` asli harus diabaikan; template
    `.env*.example` tetap di-commit.
@@ -482,7 +588,7 @@ flowchart LR
 | Sebelum perubahan berisiko | `/checkpoint before schema refactor` | Commit lokal atas file sesi ini, per pathspec |
 | Review | `/review` (dan `/check-fix` saat ada gate yang merah) | [`agents-reviewer`](.claude/agents/agents-reviewer.md) melaporkan temuan yang mengutip aturan, diurutkan menurut tingkat keparahan |
 | Commit | `/commit`, lalu `git commit -m "feat: add rate limiting" -- <paths>` | `.husky/pre-commit` menjalankan gate untuk apa yang Anda stage; [`post-commit.sh`](.claude/hooks/post-commit.sh) menunjukkan apa yang masuk |
-| Pull request | `/create-pr` | Quality Gate (31 langkah), Dependency Review, CodeQL, dan review AI berjalan di sana |
+| Pull request | `/create-pr` | Quality Gate (35 langkah), Dependency Review, CodeQL, dan review AI berjalan di sana |
 | Komentar review | `/resolve-pr-review 42` | Setiap thread dibalas; saran yang melanggar aturan ditolak beserta alasannya |
 | Merge | `/merge-pr 42` | [`scripts/ops/pr-ready.sh`](scripts/ops/pr-ready.sh) memeriksa kesiapan lebih dulu |
 | Promosi | `/promote`, lalu `/branch-cleanup` | Merge ke `prod` men-deploy dan melucuti lapisan AI dari `prod` |
@@ -507,11 +613,12 @@ your-project/
 ├── .claude/
 │   ├── settings.json             pemasangan hook, izin allow / ask / deny, sandbox Bash
 │   ├── hooks/                    8 hook, lib.sh, dan referensi hook (README.md)
-│   ├── rules/                    12 aturan; 11 hanya dimuat saat Claude mengerjakan file yang cocok
+│   ├── rules/                    13 aturan; 12 hanya dimuat saat Claude mengerjakan file yang cocok
 │   ├── agents/                   agents-reviewer.md dan INDEX.md
 │   ├── commands/                 15 slash command dan INDEX.md, di-generate dari _workflow-source/
-│   ├── anti-patterns/            7 jebakan yang dikenal dan INDEX.md
+│   ├── anti-patterns/            12 jebakan yang dikenal dan INDEX.md
 │   ├── docs/                     code-review-checklist.md, dibaca bila perlu
+│   ├── PAYLOAD-CONTRACT.md       kontrak payload yang opsional, dibaca bila perlu
 │   ├── mcp/                      3 contoh server MCP yang dimuat bila perlu
 │   ├── agent-config.example.json setiap pengaturan hook beserta default-nya
 │   ├── test-preload.example.ts   satu-satunya titik mocking untuk unit test
@@ -521,6 +628,8 @@ your-project/
 ├── .husky/pre-commit             menjalankan gate di setiap commit
 ├── scripts/
 │   ├── check/                    gates.sh, gates.list, dan skrip-skrip pemeriksaan
+│   ├── generate/                 openapi.ts (spec:export) dan endpoints.ts (registry payload)
+│   ├── lib/                      yang dipakai bersama pemeriksaan OpenAPI dan payload
 │   ├── ops/                      unlock.sh (Anda yang menjalankan) dan pr-ready.sh (bisakah PR ini di-merge?)
 │   ├── env/                      show.sh (daftar tersamar), set.sh (menulis saat terbuka), envfile.py
 │   └── sync/                     workflows.sh (menulis dan memeriksa salinan command)
@@ -533,9 +642,11 @@ your-project/
 ```
 
 Dua file yang Anda ubah secara manual: `.gitignore` (digabung) dan `package.json` (ditambah
-script). File-file ini tetap di template, karena mendokumentasikan template, bukan proyek Anda:
-`README.md`, `README.id.md`, `SETUP.md`, `LICENSE`, `docs/RATIONALE.md`, `docs/assets/`, dan
-`.markdownlint-cli2.jsonc`.
+script). Modul payload (`payload.config.json`, `src/lib/payload/`, `src/lib/endpoints/`, dan
+middleware-nya) hanya disalin bila Anda
+[mengadopsinya](#enkripsi-payload-body-tersegel-dan-satu-registry-endpoint). File-file ini tetap di
+template, karena mendokumentasikan template, bukan proyek Anda: `README.md`, `README.id.md`,
+`SETUP.md`, `LICENSE`, `docs/RATIONALE.md`, `docs/assets/`, dan `.markdownlint-cli2.jsonc`.
 
 ## Bagaimana bagian-bagiannya saling terhubung
 
@@ -568,11 +679,11 @@ flowchart LR
 
 | Lapisan       | Di mana                                 | Tugas                                                                            |                            Ukuran |
 | :------------ | :-------------------------------------- | :------------------------------------------------------------------------------- | --------------------------------: |
-| **Router**    | `CLAUDE.md`                             | Apa yang dibaca untuk tugas apa. Dimuat setiap sesi, jadi dibuat singkat         |                         184 baris |
-| **Guardrail** | `AGENTS.md`                             | Aturan bernomor yang bisa dikutip, masing-masing menyebut apa yang menegakkannya |                         545 baris |
-| **Kontrak**   | `SSOT.md`                               | Arsitektur, auth, kontrak error, database, tes, pipeline, environment            |                         195 baris |
-| **Mesin**     | `.claude/`, `.mcp.json`                 | Hook, aturan, subagen reviewer, anti-pattern, command, server MCP                |                           60 file |
-| **Gate**      | `.husky/`, `scripts/check/`, `.github/` | Definisi "lolos": sebelum setiap commit dan di setiap pull request               | 15 gate · 31 langkah · 7 workflow |
+| **Router**    | `CLAUDE.md`                             | Apa yang dibaca untuk tugas apa. Dimuat setiap sesi, jadi dibuat singkat         |                         185 baris |
+| **Guardrail** | `AGENTS.md`                             | Aturan bernomor yang bisa dikutip, masing-masing menyebut apa yang menegakkannya |                         572 baris |
+| **Kontrak**   | `SSOT.md`                               | Arsitektur, auth, kontrak error, database, tes, pipeline, environment            |                         212 baris |
+| **Mesin**     | `.claude/`, `.mcp.json`                 | Hook, aturan, subagen reviewer, anti-pattern, command, server MCP                |                           67 file |
+| **Gate**      | `.husky/`, `scripts/check/`, `.github/` | Definisi "lolos": sebelum setiap commit dan di setiap pull request               | 19 gate · 35 langkah · 7 workflow |
 
 Guardrail kira-kira tiga kali ukuran router dan kontrak. Itu wajar untuk backend: aturan keamanan
 dan akses data harus dijabarkan, sementara arsitekturnya cukup seragam untuk dinyatakan sekali
@@ -664,16 +775,17 @@ dan hook.
 
 ### Aturan
 
-Aturan adalah file Markdown yang dimuat Claude Code sebagai instruksi. Sebelas dari dua belas
+Aturan adalah file Markdown yang dimuat Claude Code sebagai instruksi. Dua belas dari tiga belas
 diawali daftar `paths:`, sehingga hanya dimuat setelah sesi membaca file yang cocok.
 
 | Nama | Fungsinya | Cara memakai | Mengapa membantu |
 | --- | --- | --- | --- |
-| [`common/working-agreements.md`](.claude/rules/common/working-agreements.md) | Cara bekerja: komunikasi, cakupan, bukti, urutan kerja, checkout bersama, sistem live, jebakan tool; satu baris per koreksi | Dimuat setiap sesi (satu-satunya aturan tanpa cakupan, 4.278 byte) | Setiap koreksi dilakukan sekali, bukan setiap sesi |
+| [`common/working-agreements.md`](.claude/rules/common/working-agreements.md) | Cara bekerja: komunikasi, cakupan, bukti, urutan kerja, checkout bersama, sistem live, jebakan tool; satu baris per koreksi | Dimuat setiap sesi (satu-satunya aturan tanpa cakupan, 4.556 byte) | Setiap koreksi dilakukan sekali, bukan setiap sesi |
 | [`common/patterns.md`](.claude/rules/common/patterns.md) | Pola yang dipakai repo ini dan yang sengaja dihindari, serta di mana masing-masing dijabarkan | Dimuat untuk `src/**` | Kode baru meniru modul referensi, bukan bentuk baru |
 | [`common/error-codes.md`](.claude/rules/common/error-codes.md) | Setiap kode error tinggal di `ERROR_CODES`, dan setiap kode yang dibaca frontend punya baris di sana | Dimuat untuk `src/lib/errors/**`, `src/modules/**`, middleware, dan hook | Tidak ada "Something went wrong" untuk kode yang tidak dipetakan siapa pun |
 | [`common/folder-shape.md`](.claude/rules/common/folder-shape.md) | Path sebuah file menyatakan fungsinya (SHAPE-1 sampai SHAPE-4) | Dimuat untuk `src/**`, `tests/**`, `scripts/**`; ditegakkan oleh `check:folder-shape` | File berada di tempat yang Anda tebak |
 | [`common/testing.md`](.claude/rules/common/testing.md) | 100% per file, tes lebih dulu, bentuk Arrange-Act-Assert, nama tes | Dimuat untuk `src/**/__tests__/**`, `src/test/**`, `bunfig.toml` | Tes membuktikan perilaku, bukan sekadar menambah angka |
+| [`common/payload-contract.md`](.claude/rules/common/payload-contract.md) (opsional) | Versi singkat [kontrak payload](#enkripsi-payload-body-tersegel-dan-satu-registry-endpoint): strict kecuali dikecualikan dengan alasan, tidak ada path route di luar registry, enkripsi hanya di tepi layanan, request mentah dibaca sekali, kunci ditambah dan tidak pernah dialihfungsikan, tidak ada body tersegel di log | Dimuat untuk `src/lib/payload/**`, `src/lib/endpoints/**`, `src/middlewares/**`, skrip payload, `payload.config.json`, dan `openapi.json` | Teks biasa dan drift tertangkap saat kode ditulis, bukan saat review |
 | [`typescript/types.md`](.claude/rules/typescript/types.md) | Tanpa `any` dalam bentuk apa pun; oxlint `no-explicit-any` di level error, termasuk tes | Dimuat untuk setiap file `.ts`, `.tsx`, `.mts`, `.cts` | Compiler tetap menangkap kesalahan |
 | [`typescript/dead-code.md`](.claude/rules/typescript/dead-code.md) | Temuan Knip diperbaiki, tidak pernah dibungkam | Dimuat untuk file TypeScript dan `.mjs`, `knip.ts`, dan `package.json` | Kode dan dependensi yang tidak terpakai tidak menumpuk |
 | [`typescript/coverage.md`](.claude/rules/typescript/coverage.md) | Apa yang diukur coverage 100%, sedikit pengecualiannya, cara mengubah gate-nya | Dimuat untuk `src/**`, `tests/**`, `scripts/check/**`, `bunfig.toml` | Gate yang dilemahkan ditolak, bukan dibiarkan lewat |
@@ -701,6 +813,11 @@ membacanya lebih dulu dan `/learn-session` menambahkannya.
 | [`better-auth-user-hook-runs-first.md`](.claude/anti-patterns/better-auth-user-hook-runs-first.md) | better-auth menjalankan `hooks.after` Anda lebih dulu, lalu membiarkan plugin menimpa responsnya | Muat saat menambah ke `hooks.after` atau mengubah urutan plugin | Penolakan yang diam-diam berubah menjadi sukses |
 | [`session-rows-are-a-mirror-not-the-session.md`](.claude/anti-patterns/session-rows-are-a-mirror-not-the-session.md) | Menghapus baris `session` tidak mengakhiri sesi bila Redis yang memegangnya | Muat saat mengakhiri sesi atau mengubah kolom yang dibawa sesi | Pengguna yang diblokir tetapi masih login |
 | [`queue-job-id-cannot-contain-colon.md`](.claude/anti-patterns/queue-job-id-cannot-contain-colon.md) | Job id kustom BullMQ yang mengandung `:` ditolak sebelum sampai ke Redis | Muat saat memberi `jobId` ke sebuah queue | Job yang ternyata tidak pernah masuk antrean |
+| [`auth-cookie-cache-outlives-revocation.md`](.claude/anti-patterns/auth-cookie-cache-outlives-revocation.md) | Cookie cache Better Auth menjawab `getSession` dari cookie yang ditandatangani, sehingga sesi yang dicabut atau pengguna yang diblokir tetap berfungsi sampai cache-nya kedaluwarsa | Muat saat mencabut sesi, memblokir pengguna, atau saat alur "sesi berakhir" memantul balik | Blokir berlaku seketika, bukan semenit kemudian |
+| [`better-auth-account-endpoints-are-gated.md`](.claude/anti-patterns/better-auth-account-endpoints-are-gated.md) | Sebagian endpoint akun butuh sesi yang masih segar dan sebagian hanya untuk server, dan client tidak menunjukkannya | Muat saat membangun alur unlink, daftar sesi, atau set password di client auth | Layar pengaturan yang berfungsi untuk pengguna sungguhan, bukan hanya sesaat setelah login |
+| [`better-auth-list-option-replaces-defaults.md`](.claude/anti-patterns/better-auth-list-option-replaces-defaults.md) | Opsi berbentuk daftar (path, origin) pada plugin menggantikan default-nya, bukan menambahinya | Muat saat memberi opsi berbentuk daftar ke plugin Better Auth | Menambah satu route tidak pernah mematikan pemeriksaan untuk route lain |
+| [`better-auth-passkey-quirks.md`](.claude/anti-patterns/better-auth-passkey-quirks.md) | Prompt passkey yang ditutup mengembalikan error, dan verifikasi pengguna tidak diwajibkan secara default | Muat untuk pendaftaran passkey, login, pembatalan, atau verifikasi pengguna | Passkey dihitung sebagai dua faktor hanya bila memang begitu |
+| [`gateway-cancel-result-is-not-the-state.md`](.claude/anti-patterns/gateway-cancel-result-is-not-the-state.md) | Hasil cancel dari payment gateway, entah timeout atau penolakan, tidak mengatakan apa pun tentang status pembayaran yang sebenarnya | Muat saat membatalkan atau menggantikan pembayaran, atau resource jarak jauh apa pun, lalu bertindak berdasarkan hasilnya | Tidak ada tagihan kedua untuk sesuatu yang baru saja dibayar |
 
 ### Pemeriksaan dan gate
 
@@ -719,11 +836,15 @@ dipanggilnya.
 | `bun run type-check` | `tsc --noEmit` | Berjalan untuk kode yang di-stage | Error tipe tidak pernah sampai ke review |
 | `bun run check:dead-code` ([`knip.ts`](knip.ts)) | Knip: file, export, dan dependensi yang tidak terpakai | Berjalan untuk kode yang di-stage | Kode mati dihapus, bukan dibawa-bawa |
 | [`constants.ts`](scripts/check/constants.ts) + [`constants.config.json`](scripts/check/constants.config.json) | Nama role, queue, atau cache yang diketik ulang alih-alih diimpor dari satu rumahnya | Berjalan untuk kode yang di-stage; isi config-nya dulu (SETUP §6) | Penggantian nama tidak bisa melewatkan satu salinan pun |
+| [`dockerfile.ts`](scripts/check/dockerfile.ts) | Image membangun apa yang sudah divalidasi gate: client yang di-generate ke folder yang di-gitignore juga di-generate di dalam image, base image yang di-pin dengan digest menyebut versinya di tag, dan Bun di image tidak lebih lama dari Bun yang menjalankan pemeriksaan ini. Tanpa `Dockerfile`, ia menyebutkannya lalu lolos | Berjalan untuk kode yang di-stage; `bun run check:dockerfile` | Image yang gagal di import pertamanya, atau menjalankan Bun yang lebih lama dari yang dibuktikan gate, tertangkap sebelum dibangun |
 | [`module-mocks.ts`](scripts/check/module-mocks.ts) | `mock.module` yang akan bocor ke setiap file tes berikutnya | Berjalan untuk kode yang di-stage | Tes lolos dengan cara yang sama di setiap mesin |
 | [`double-assertion.sh`](scripts/check/double-assertion.sh) | Menolak `x as unknown as T` | Berjalan untuk kode yang di-stage | Pemeriksaan overlap milik compiler tetap aktif |
 | [`folder-shape.mjs`](scripts/check/folder-shape.mjs) | File yang path-nya tidak menyatakan fungsinya (SHAPE-1 sampai SHAPE-4) | Berjalan untuk kode yang di-stage | File berada di tempat yang Anda tebak |
 | [`coverage-policy.mjs`](scripts/check/coverage-policy.mjs) | Menolak ambang yang diturunkan, cakupan yang dipersempit, atau pengecualian tanpa alasan | Berjalan untuk kode yang di-stage | 100% tetap berarti 100% |
 | [`ci-env.sh`](scripts/check/ci-env.sh) `bun run test:coverage` + [`coverage-files.mjs`](scripts/check/coverage-files.mjs) | Seluruh tes dengan coverage, dan setiap file sumber dimuat oleh minimal satu tes, dijalankan persis dengan variabel CI (blok `env:` level job di workflow) tanpa apa pun dari shell Anda atau file `.env` | Berjalan untuk kode yang di-stage; satu file: `bash scripts/check/ci-env.sh bun test <path>` | Handler tanpa tes tidak bisa lolos, dan tes yang hanya lolos dengan kredensial lokal Anda gagal sebelum CI |
+| [`openapi.ts`](scripts/check/openapi.ts) + [`generate/openapi.ts`](scripts/generate/openapi.ts) | Membangun dokumen OpenAPI dari aplikasi, gagal bila dokumen itu tidak menjelaskan satu route pun, dan gagal bila berbeda dari `openapi.json` yang di-commit, dibandingkan menurut maknanya (blok `info` boleh berbeda). Tanpa `src/app.ts`, ia menyebutkannya lalu lolos | Berjalan untuk kode yang di-stage, dengan variabel CI (`bash scripts/check/ci-env.sh bun run check:openapi`); `bun run spec:export` menulis ulang file-nya | Route yang dipasang di luar kontrak, atau spec basi yang dipakai frontend untuk membuat client-nya, gagal di sini, bukan di repositori lain |
+| [`endpoints.ts`](scripts/check/endpoints.ts) + [`generate/endpoints.ts`](scripts/generate/endpoints.ts) (opsional) | Separuh statis [kontrak payload](#enkripsi-payload-body-tersegel-dan-satu-registry-endpoint): saklar yang di-commit bernilai `strict`; registry hasil generate sama dengan yang tersirat dari spec dan pengecualiannya; setiap entri non-strict punya alasan dan entri strict tidak punya; tidak ada path route yang diketik di `src/` di luar file yang boleh menyebut route; peer yang di-checkout punya spec dan pengecualian yang sama | Berjalan untuk kode yang di-stage; `bun run check:endpoints`; `bun run generate:endpoints` setelah spec berubah | Teks biasa tidak bisa menyusup lewat route baru atau path yang diketik manual |
+| [`crypto-interop.ts`](scripts/check/crypto-interop.ts) + [`payload-vectors.json`](scripts/check/payload-vectors.json) (opsional) | Menjalankan cipher repo ini terhadap test vector bersama (data terautentikasi byte demi byte, ciphertext yang di-commit berhasil dibuka, envelope yang dipindah ke route, method, status, kunci, atau waktu lain ditolak), melakukan round-trip sebuah body, dan menyegel dengan satu salinan lalu membuka dengan salinan lain untuk setiap peer yang di-checkout | Berjalan untuk kode yang di-stage; `bun run check:crypto-interop` | Salinan cipher di repositori yang berbeda tidak bisa melenceng tanpa ketahuan |
 | [`ai-config.sh`](scripts/check/ai-config.sh) | Setiap aturan yang dikutip ada di `AGENTS.md`; konteks yang selalu dimuat di bawah 15.000 byte; pemasangan hook; pin MCP yang persis | Berjalan bila ada apa pun yang di-stage; `bash scripts/check/ai-config.sh` | Instruksi untuk agen tetap benar dan ringkas |
 | [`ai-config-probes.sh`](scripts/check/ai-config-probes.sh) | Membuktikan aturan pin MCP dari dua arah di repo sementara | Berjalan untuk kode yang di-stage | Pemeriksaan pin yang meloloskan versi bergerak gagal dengan jelas |
 | `workflows.sh --check` ([`workflows.sh`](scripts/sync/workflows.sh)) | Gagal bila salinan command atau baris `INDEX.md` melenceng dari `_workflow-source/` | Berjalan bila command di-stage | Setiap salinan command mengatakan hal yang sama |
@@ -736,7 +857,7 @@ atas:
 
 | Nama | Fungsinya | Cara memakai | Mengapa membantu |
 | --- | --- | --- | --- |
-| [`quality-gate.sh`](.github/scripts/quality-gate.sh) | 31 langkah pull request secara berurutan; `--strict` menggagalkan langkah yang tidak bisa berjalan (selalu aktif di CI) | `bash .github/scripts/quality-gate.sh origin/dev` | Gate yang sama berjalan di mesin Anda sebelum Anda push |
+| [`quality-gate.sh`](.github/scripts/quality-gate.sh) | 35 langkah pull request secara berurutan; `--strict` menggagalkan langkah yang tidak bisa berjalan (selalu aktif di CI) | `bash .github/scripts/quality-gate.sh origin/dev` | Gate yang sama berjalan di mesin Anda sebelum Anda push |
 | [`migrations.sh`](scripts/check/migrations.sh) | Men-generate ulang migration dari skema dan gagal bila berbeda dengan yang di-commit | Di gate; tersendiri: `bash scripts/check/migrations.sh` | Perubahan skema selalu dikirim bersama migration-nya |
 | [`index-coverage.sh`](scripts/check/index-coverage.sh) | Setiap kolom foreign key punya index | Di gate; tersendiri: `bash scripts/check/index-coverage.sh` | Postgres tidak memberi index pada kolom `REFERENCES`; join dan cascade tetap cepat |
 | Hardening runtime (di `quality-gate.sh`) | `cors()` tanpa argumen; middleware request-id, secure-headers, body-limit, atau timeout yang hilang; pool berukuran 1–2; tanpa statement timeout | Di gate | Pengaturan produksi tidak bisa hilang dari `src/app.ts` diam-diam |
@@ -748,7 +869,7 @@ atas:
 | Audit, `.env`, pemindaian riwayat, build | `bun audit --audit-level high`; tidak ada `.env` yang di-commit; gitleaks atas seluruh riwayat; build produksi; tanpa source map di dalamnya | Di gate | Jaring terakhir sebelum merge |
 
 <details>
-<summary>31 langkah pull request, berurutan</summary>
+<summary>35 langkah pull request, berurutan</summary>
 
 1. Pasang dependensi (`--frozen-lockfile --ignore-scripts`)
 2. Format dan lint
@@ -761,26 +882,30 @@ atas:
 9. Mock modul
 10. Unit test dengan coverage
 11. Rumah konstanta
-12. Drift salinan command
-13. Drift migration
-14. Cakupan index
-15. Hardening runtime
-16. Konfigurasi AI
-17. Probe konfigurasi AI: aturan pin MCP, dibuktikan dari dua arah
-18. Probe hook
-19. Tanpa double assertion
-20. Pemindaian keamanan skill, hanya bila command, agen, atau hook berubah
-21. Audit dependensi (`bun audit --audit-level high`)
-22. Tidak ada file `.env` yang di-commit
-23. Probe pemindai diff: pemindai di balik tiga langkah berikutnya, dibuktikan pada diff 40.000 baris
-24. API JavaScript berbahaya (`eval`, `new Function`) di baris yang ditambahkan
-25. Pola injeksi HTML yang tidak aman di baris yang ditambahkan
-26. Injeksi URL scheme di baris yang ditambahkan
-27. Interpolasi raw SQL
-28. Pemindaian rahasia atas seluruh riwayat (gitleaks yang di-pin, diverifikasi dengan checksum)
-29. Drift spec API
-30. Build produksi
-31. Source map di output build
+12. Dockerfile: image membangun apa yang sudah divalidasi gate ini
+13. Dokumen OpenAPI: terbangun, menjelaskan satu route atau lebih, dan sama dengan `openapi.json`
+14. Registry endpoint payload, hanya bila `gates.list` mendaftarnya
+15. Interop kripto payload, hanya bila `gates.list` mendaftarnya
+16. Drift salinan command
+17. Drift migration
+18. Cakupan index
+19. Hardening runtime
+20. Konfigurasi AI
+21. Probe konfigurasi AI: aturan pin MCP, dibuktikan dari dua arah
+22. Probe hook
+23. Tanpa double assertion
+24. Pemindaian keamanan skill, hanya bila command, agen, atau hook berubah
+25. Audit dependensi (`bun audit --audit-level high`)
+26. Tidak ada file `.env` yang di-commit
+27. Probe pemindai diff: pemindai di balik tiga langkah berikutnya, dibuktikan pada diff 40.000 baris
+28. API JavaScript berbahaya (`eval`, `new Function`) di baris yang ditambahkan
+29. Pola injeksi HTML yang tidak aman di baris yang ditambahkan
+30. Injeksi URL scheme di baris yang ditambahkan
+31. Interpolasi raw SQL
+32. Pemindaian rahasia atas seluruh riwayat (gitleaks yang di-pin, diverifikasi dengan checksum)
+33. Drift spec API
+34. Build produksi
+35. Source map di output build
 
 </details>
 
@@ -801,22 +926,25 @@ setiap gate kecuali probe hook, yang butuh beberapa menit: probe itu berjalan bi
 | [`envfile.py`](scripts/env/envfile.py) | Parser dan penyamar `.env` di balik `show.sh` dan `set.sh` | Dipakai oleh kedua skrip itu | Satu parser, sehingga daftar dan edit selalu sepakat |
 | [`pr-ready.sh`](scripts/ops/pr-ready.sh) | Satu tabel baca-saja: pemeriksaan, kemampuan merge, thread yang belum selesai, head branch yang diharapkan | `/merge-pr` dan `/promote` menjalankannya; manual: `bash scripts/ops/pr-ready.sh 42` | Pemeriksaan yang dilewati atau masih tertunda tidak pernah dihitung lolos |
 | [`workflows.sh`](scripts/sync/workflows.sh) | Menulis salinan command dari `_workflow-source/` | `bash scripts/sync/workflows.sh` setelah Anda mengedit command | Anda mengedit satu file, bukan tiga |
-| [`strip-paths.sh`](.github/scripts/strip-paths.sh), [`strip-ai.sh`](.github/scripts/strip-ai.sh), [`verify-strip.sh`](.github/scripts/verify-strip.sh), [`back-merge-prod.sh`](.github/scripts/back-merge-prod.sh) | Melucuti lapisan ini dari `prod` setelah promosi, membuktikan kedua branch, lalu merge `prod` kembali ke `dev` | `strip-ai-on-pr.yml` menjalankannya; `/promote-deploy` menjalankannya secara manual | Branch yang di-deploy tidak membawa konfigurasi AI, dan `dev` tetap menyimpannya |
-| [`trigger-deploy.sh`](.github/scripts/trigger-deploy.sh) | Memanggil webhook deploy platform Anda, dengan percobaan ulang | `ci-cd.yml` menjalankannya setelah merge ke `prod` | Deploy tanpa terkunci ke satu vendor |
+| [`strip-paths.sh`](.github/scripts/strip-paths.sh), [`strip-ai.sh`](.github/scripts/strip-ai.sh), [`verify-strip.sh`](.github/scripts/verify-strip.sh), [`back-merge-prod.sh`](.github/scripts/back-merge-prod.sh) | Melucuti lapisan ini dari `prod` setelah promosi, membuktikan kedua branch, lalu merge `prod` kembali ke `dev` | `/promote-deploy` menjalankannya secara manual; `strip-ai-on-pr.yml` menghapus daftar yang sama di CI | Branch yang di-deploy tidak membawa konfigurasi AI, dan `dev` tetap menyimpannya |
+| [`trigger-deploy.sh`](.github/scripts/trigger-deploy.sh) | Memanggil webhook deploy platform Anda, dengan percobaan ulang | `/promote-deploy` menjalankannya untuk deploy manual; `ci-cd.yml` memanggil webhook yang sama di CI | Deploy tanpa terkunci ke satu vendor |
 
 ### Workflow CI
 
-Setiap workflow dimulai dari event pull request; detail dan token ada di [CI/CD](#cicd).
+Setiap workflow dimulai dari event pull request; detail dan token ada di [CI/CD](#cicd). Workflow
+review, deploy, dan strip hanyalah pemanggil pendek bagi reusable workflow milik agent-config-kit,
+di-pin ke commit rilis v1.2.0-nya, sehingga logikanya di-review sekali dan diperbarui dengan
+mengganti satu SHA.
 
 | Nama | Fungsinya | Cara memakai | Mengapa membantu |
 | --- | --- | --- | --- |
-| [`quality-gate.yml`](.github/workflows/quality-gate.yml) | Menjalankan `quality-gate.sh`, ke-31 langkahnya, dalam mode strict | Berjalan sendiri pada pull request ke `dev` atau `prod` | Definisi "lolos" sama untuk semua orang |
+| [`quality-gate.yml`](.github/workflows/quality-gate.yml) | Menjalankan `quality-gate.sh`, ke-35 langkahnya, dalam mode strict | Berjalan sendiri pada pull request ke `dev` atau `prod` | Definisi "lolos" sama untuk semua orang |
 | [`dependency-review.yml`](.github/workflows/dependency-review.yml) | Menggagalkan pull request yang menambah atau menaikkan dependensi dengan advisory high atau critical | Setiap pull request | Paket yang dikenal rentan dihentikan di tempat ia ditambahkan |
 | [`codeql.yml`](.github/workflows/codeql.yml) | CodeQL untuk workflow, dan untuk kode setelah `tsconfig.json` ada | Setiap pull request | Bug keamanan diberi anotasi di baris yang Anda ubah |
 | [`workflows-lint.yml`](.github/workflows/workflows-lint.yml) | actionlint, zizmor, dan pinact atas workflow | Pull request yang mengubah `.github/**` | Action yang tidak di-pin dan ekspresi yang bisa diinjeksi tidak pernah di-merge |
-| [`deepseek-review.yml`](.github/workflows/deepseek-review.yml) | Komentar review AI atas diff | Pull request ke `dev` dibuka atau dibuka ulang; komentari `/ask-deepseek` untuk review lagi | Pembaca kedua di setiap perubahan; hapus file-nya bila Anda tidak menginginkannya |
-| [`ci-cd.yml`](.github/workflows/ci-cd.yml) | Memicu webhook deploy | Pull request ke `prod` di-merge | Hanya promosi yang sudah di-merge yang men-deploy |
-| [`strip-ai-on-pr.yml`](.github/workflows/strip-ai-on-pr.yml) | Melucuti lapisan ini dari `prod`, merge balik ke `dev`, memverifikasi keduanya | Pull request ke `prod` di-merge | Produksi tidak pernah membawa instruksi untuk agen |
+| [`deepseek-review.yml`](.github/workflows/deepseek-review.yml) | Review DeepSeek atas diff sebagai satu komentar, diperbarui di setiap run, lewat reusable workflow `deepseek-review`; butuh `DEEPSEEK_API_KEY` | Pull request ke `dev` dibuka, dibuka ulang, atau ditandai siap; komentari `/ask-deepseek` untuk review lagi | Pembaca kedua di setiap perubahan; hapus file-nya bila Anda tidak menginginkannya |
+| [`ci-cd.yml`](.github/workflows/ci-cd.yml) | Memicu webhook deploy lewat reusable workflow `deploy-webhook`, dengan percobaan ulang | Pull request ke `prod` di-merge; butuh `DEPLOY_WEBHOOK_URL` | Hanya promosi yang sudah di-merge yang men-deploy |
+| [`strip-ai-on-pr.yml`](.github/workflows/strip-ai-on-pr.yml) | Melucuti lapisan ini dari `prod`, merge balik ke `dev`, memverifikasi keduanya, lewat reusable workflow `strip-ai` (daftarnya ditambah `promote-deploy-logs`, sama dengan daftar di `strip-paths.sh`) | Pull request ke `prod` di-merge | Produksi tidak pernah membawa instruksi untuk agen |
 
 ### File konfigurasi
 
@@ -834,6 +962,7 @@ Setiap workflow dimulai dari event pull request; detail dan token ada di [CI/CD]
 | [`.claude/docs/code-review-checklist.md`](.claude/docs/code-review-checklist.md) | Daftar periksa review untuk manusia, dikaitkan dengan aturan `AGENTS.md` | `/review` membacanya lebih dulu; manusia juga membacanya | Review memeriksa hal yang sama setiap kali |
 | [`bunfig.toml`](bunfig.toml) | Penemuan tes di bawah `src/`, preload, coverage 100% | Dipakai oleh `bun test` | Coverage ditegakkan oleh runner itu sendiri |
 | [`knip.ts`](knip.ts) | Entry point untuk pemeriksaan kode mati, masing-masing dengan alasannya | Dipakai oleh `check:dead-code` | Knip tahu apa yang dijalankan shell lewat path |
+| [`payload.config.json`](payload.config.json) (opsional) | Saklar kontrak payload yang di-commit (`strict`), path spec dan registry, pengecualian beserta alasannya, file yang boleh menyebut route, dan peer yang dibandingkan | Disalin saat Anda [mengadopsi kontraknya](#enkripsi-payload-body-tersegel-dan-satu-registry-endpoint); sebuah route hanya keluar dari `strict` lewat pengecualian di sini | Setiap pengecualian enkripsi adalah satu baris yang di-review beserta alasannya |
 | [`.oxfmtrc.json`](.oxfmtrc.json), [`.oxlintrc.json`](.oxlintrc.json), [`.oxlintignore`](.oxlintignore) | Pengaturan format dan lint | Dipakai oleh `bun run fl` dan `post-edit.sh` | Satu gaya, diterapkan saat Anda menulis |
 | [`.gitleaks.toml`](.gitleaks.toml) | Konfigurasi pemindai rahasia dan allowlist-nya yang sempit | Dipakai oleh gate gitleaks | Temuannya nyata, dan allowlist tetap kecil |
 | [`.dockerignore`](.dockerignore) | Menjauhkan `.env*`, `.git`, lapisan AI, dan tes dari image | Dipakai oleh `docker build` | Rahasia tidak pernah ikut di dalam image |
@@ -849,6 +978,7 @@ Setiap workflow dimulai dari event pull request; detail dan token ada di [CI/CD]
 | [`SETUP.md`](SETUP.md) | Panduan pemasangan berurutan: tool, placeholder, tabel compliance, server MCP, hook, gate, GitHub, pipeline strip | Baca setelah [Mulai cepat](#mulai-cepat); sediakan sekitar satu jam | Tidak ada yang terpasang setengah jalan |
 | [`docs/unlock.md`](docs/unlock.md) | Cara Anda membuka edit `.env*` dan penulisan ke produksi, apa persisnya yang dikunci, dan apa yang tidak dihentikan kunci itu | Penolakan dari hook menautkan ke sini; disalin ke proyek Anda oleh Mulai cepat | Anda tahu apa yang dilindungi kunci sebelum mengandalkannya |
 | [`.claude/hooks/README.md`](.claude/hooks/README.md) | Referensi hook: kontrak, mode gagal, setiap penolakan, sandbox, konfigurasi, cara mengubah hook | Baca sebelum mengedit atau mematikan sebuah hook | Perubahan pada guard tetap membawa buktinya |
+| [`.claude/PAYLOAD-CONTRACT.md`](.claude/PAYLOAD-CONTRACT.md) | Kontrak payload selengkapnya: apa yang dilindungi dan apa yang tidak, format wire, empat kebijakan, aturan P1 sampai P10, kode error, saklar, kunci, test vector bersama, dan cara memasangnya | Baca sebelum mengadopsi modulnya atau menyentuh middleware atau registry; `CLAUDE.md` mencantumkannya untuk dibaca bila perlu, dan aturan singkatnya dimuat sendiri | Enkripsi menjadi kontrak tertulis dengan model ancaman, bukan tebakan |
 | [`docs/RATIONALE.md`](docs/RATIONALE.md) | 23 keputusan yang tampak aneh sampai Anda tahu harganya, masing-masing dengan kegagalan di baliknya | Baca entrinya sebelum Anda "menyederhanakan" sesuatu | Bug lama tetap terperbaiki |
 
 ## Apa yang diblokir
@@ -1026,23 +1156,24 @@ sini.
 
 ### Setiap trigger adalah event pull request
 
-| Workflow                | Berjalan saat                                                            | Token                                   | Fungsinya                                                                         |
-| :---------------------- | :----------------------------------------------------------------------- | :-------------------------------------- | :-------------------------------------------------------------------------------- |
-| `quality-gate.yml`      | pull request ke `dev` atau `prod`                                        | `contents: read`                        | `.github/scripts/quality-gate.sh`, setiap langkah dalam mode strict               |
-| `deepseek-review.yml`   | pull request ke `dev` dibuka atau dibuka ulang; komentar `/ask-deepseek` | `pull-requests: write` di job           | komentar review AI                                                                |
-| `ci-cd.yml`             | pull request ke `prod` **di-merge**                                      | `contents: read`                        | webhook deploy                                                                    |
-| `strip-ai-on-pr.yml`    | pull request ke `prod` **di-merge**                                      | `contents: write` di job                | melucuti lapisan AI dari `prod`, merge balik ke `dev`, memverifikasi keduanya     |
-| `workflows-lint.yml`    | pull request yang mengubah `.github/**`                                  | `contents: read`                        | actionlint, zizmor, pinact                                                        |
-| `dependency-review.yml` | setiap pull request                                                      | `contents: read`                        | gagal pada dependensi baru atau yang dinaikkan dengan advisory high atau critical |
-| `codeql.yml`            | setiap pull request                                                      | `security-events: write` di job analyze | CodeQL untuk workflow, dan untuk kode setelah `tsconfig.json` ada                 |
+| Workflow                | Berjalan saat                                                                            | Token                                   | Fungsinya                                                                         |
+| :---------------------- | :--------------------------------------------------------------------------------------- | :-------------------------------------- | :-------------------------------------------------------------------------------- |
+| `quality-gate.yml`      | pull request ke `dev` atau `prod`                                                        | `contents: read`                        | `.github/scripts/quality-gate.sh`, setiap langkah dalam mode strict               |
+| `deepseek-review.yml`   | pull request ke `dev` dibuka, dibuka ulang, atau ditandai siap; komentar `/ask-deepseek` | `pull-requests: write` di job           | satu komentar review AI, diperbarui di setiap run                                 |
+| `ci-cd.yml`             | pull request ke `prod` **di-merge**                                                      | `contents: read`                        | webhook deploy                                                                    |
+| `strip-ai-on-pr.yml`    | pull request ke `prod` **di-merge**                                                      | `contents: write` di job                | melucuti lapisan AI dari `prod`, merge balik ke `dev`, memverifikasi keduanya     |
+| `workflows-lint.yml`    | pull request yang mengubah `.github/**`                                                  | `contents: read`                        | actionlint, zizmor, pinact                                                        |
+| `dependency-review.yml` | setiap pull request                                                                      | `contents: read`                        | gagal pada dependensi baru atau yang dinaikkan dengan advisory high atau critical |
+| `codeql.yml`            | setiap pull request                                                                      | `security-events: write` di job analyze | CodeQL untuk workflow, dan untuk kode setelah `tsconfig.json` ada                 |
 
 Tidak ada yang berjalan saat push, terjadwal, `workflow_dispatch`, `workflow_run`, atau
 `pull_request_target`, dan tidak ada bot yang membuka pull request update: push tidak memulai apa
 pun, siapa pun pelakunya, dan update terjadi lewat pull request yang dibuka manusia
 (`pinact run -u --min-age 7` untuk action yang di-pin, `bun update` untuk dependensi). Setiap
-`uses:` di-pin ke SHA commit lengkap dengan rilis persisnya di komentar, token level atas adalah
-`contents: read`, setiap checkout membuang kredensialnya kecuali milik job strip (skripnya push
-dengan token itu), dan tidak ada ekspresi `${{ }}` yang sampai ke blok `run:`. Tiga workflow
+`uses:` di-pin ke SHA commit lengkap dengan rilis persisnya di komentar, termasuk reusable workflow
+milik agent-config-kit (commit rilis v1.2.0-nya). Token level atas adalah `contents: read`, setiap
+checkout membuang kredensialnya (job strip mendapat tokennya lewat credential helper git), dan
+tidak ada ekspresi `${{ }}` yang sampai ke blok `run:`. Tiga workflow
 terakhir dibagikan tanpa perubahan dengan template saudara dan mendokumentasikan dirinya sendiri,
 sehingga pemeriksaan komentar mengecualikannya berdasarkan path persisnya.
 [SETUP §8](SETUP.md#8-github-pull-request-only-ci) menjelaskan mengapa tidak ada yang berjalan
@@ -1050,15 +1181,15 @@ dengan pengatur waktu.
 
 ### Workflow review dan secret-nya
 
-| Event                                     | File workflow dari              | `DEEPSEEK_CODE_REVIEW_TOKEN` | Yang terjadi                                                                       |
-| :---------------------------------------- | :------------------------------ | :--------------------------- | :--------------------------------------------------------------------------------- |
-| `pull_request` dari branch repositori ini | merge commit milik pull request | tersedia                     | review berjalan                                                                    |
-| `pull_request` dari fork                  | merge commit milik pull request | ditahan                      | dilewati oleh `if:` di job                                                         |
-| `issue_comment` pada pull request         | branch default                  | tersedia                     | review berjalan, hanya untuk `/ask-deepseek` dari owner, member, atau collaborator |
+| Event                                     | File workflow dari              | `DEEPSEEK_API_KEY` | Yang terjadi                                                                       |
+| :---------------------------------------- | :------------------------------ | :----------------- | :--------------------------------------------------------------------------------- |
+| `pull_request` dari branch repositori ini | merge commit milik pull request | tersedia           | review berjalan                                                                    |
+| `pull_request` dari fork                  | merge commit milik pull request | ditahan            | dilewati oleh `if:` di job                                                         |
+| `issue_comment` pada pull request         | branch default                  | tersedia           | review berjalan, hanya untuk `/ask-deepseek` dari owner, member, atau collaborator |
 
-Tidak ada langkah yang men-checkout atau menjalankan kode pull request: action membaca diff lewat
-API, dan itulah yang membuat jalur komentar tetap aman juga untuk pull request dari fork. Edit
-deskripsi repositori di prompt (baris `<...>` di `sys-prompt`) sebelum mengandalkannya.
+Tidak ada langkah yang men-checkout atau menjalankan kode pull request: reusable workflow
+agent-config-kit membaca diff lewat API dan melewati pull request dari fork di setiap event. Edit
+deskripsi repositori (baris `<...>` di `instructions` workflow) sebelum mengandalkannya.
 
 ### Setelah merge ke `prod`
 
@@ -1114,7 +1245,7 @@ bergantung pada paket langganan, dan hanya untuk **repositori privat**.
 
 | Fitur                                      | Repo publik          | Repo privat di paket gratis              |
 | :----------------------------------------- | :------------------- | :--------------------------------------- |
-| Menit Actions                              | Gratis, tidak diukur | Jatah bulanan, lalu ditagih              |
+| Menit Actions                              | Gratis, tidak diukur | 2.000 menit sebulan, lalu ditagih        |
 | Workflow, secret, variabel                 | Gratis               | Gratis                                   |
 | Secret scanning + push protection          | Gratis               | Add-on berbayar                          |
 | Dependency review + code scanning (CodeQL) | Gratis               | Add-on berbayar (GitHub Code Security)   |
@@ -1150,11 +1281,11 @@ menargetkan `dev`; `prod` adalah target promosi, bukan tempat membuka pekerjaan.
 
 Tambahkan di **Settings → Secrets and variables → Actions → New repository secret**.
 
-| Secret                       | Dibutuhkan untuk       | Cara mendapatkannya                                                                                                        |
-| :--------------------------- | :--------------------- | :------------------------------------------------------------------------------------------------------------------------- |
-| `GITHUB_TOKEN`               | semuanya               | **Jangan dibuat.** GitHub menyuntikkannya ke setiap run                                                                    |
-| `DEPLOY_WEBHOOK_URL`         | job deploy `ci-cd.yml` | Webhook deploy dari platform deployment Anda. Perlakukan sebagai kredensial: siapa pun yang memegangnya bisa memicu deploy |
-| `DEEPSEEK_CODE_REVIEW_TOKEN` | `deepseek-review.yml`  | API key dari provider apa pun yang kompatibel dengan OpenAI. **Atau hapus workflow-nya**                                   |
+| Secret               | Dibutuhkan untuk       | Cara mendapatkannya                                                                                                        |
+| :------------------- | :--------------------- | :------------------------------------------------------------------------------------------------------------------------- |
+| `GITHUB_TOKEN`       | semuanya               | **Jangan dibuat.** GitHub menyuntikkannya ke setiap run                                                                    |
+| `DEPLOY_WEBHOOK_URL` | job deploy `ci-cd.yml` | Webhook deploy dari platform deployment Anda. Perlakukan sebagai kredensial: siapa pun yang memegangnya bisa memicu deploy |
+| `DEEPSEEK_API_KEY`   | `deepseek-review.yml`  | API key DeepSeek; tanpanya job lolos dan tidak mengirim apa pun. **Atau hapus workflow-nya**                               |
 
 **Secret milik aplikasi Anda sendiri (URL database, secret auth, key pihak ketiga) tidak
 diletakkan di sini.** Tempatnya di environment platform deployment Anda. Sebagai secret Actions,
@@ -1173,13 +1304,37 @@ variabel; variabel terlihat di log, secret disamarkan.
 | `CI_RUNNER_FAST` | Label opsional untuk job yang ditunggu orang: quality gate membaca `vars.CI_RUNNER_FAST \|\| vars.CI_RUNNER \|\| 'ubuntu-latest'` (`.claude/CI-RUNNERS.example.md`)        |
 | `CODE_SECURITY`  | `true` di repositori **privat** yang memiliki GitHub Code Security. Sampai saat itu `dependency-review.yml` dan `codeql.yml` melewati job-nya alih-alih gagal              |
 
+**Job mana berjalan di mana.** Tempatkan job menurut siapa yang menunggu hasilnya, bukan menurut
+seberapa berat kelihatannya. Gate yang memblokir merge adalah satu-satunya job yang tidak boleh mati
+atau macet, jadi hanya `quality-gate.yml` yang membaca `CI_RUNNER_FAST` lebih dulu. Semua yang boleh
+gagal tanpa memblokir siapa pun (review AI, pemindaian, lint workflow, deploy dan strip setelah
+merge) berjalan di `CI_RUNNER`, tempat menit paling murah. GitHub membulatkan setiap job ke atas
+menjadi satu menit penuh, jadi runner yang lebih cepat tidak menghemat apa pun untuk job yang sudah
+selesai di bawah satu menit. Penyedia mana pun bisa dipakai: workflow hanya membaca labelnya.
+
+**Memakai dua pool gratis.** Di repositori publik, runner yang di-host GitHub gratis tanpa batas
+menit: biarkan kedua variabel kosong. Repositori privat di paket Free mendapat 2.000 menit sebulan,
+dan pool pihak ketiga seperti Blacksmith menambah menit gratisnya sendiri (3.000 sebulan). Pakai
+keduanya: pasang GitHub app milik penyedia itu, lalu arahkan gate ke labelnya dan biarkan
+`CI_RUNNER` kosong, supaya job lain memakai menit GitHub.
+
+```bash
+gh variable set CI_RUNNER_FAST --body blacksmith-2vcpu-ubuntu-2404   # gate di pool kedua
+gh variable set CI_RUNNER --body blacksmith-2vcpu-ubuntu-2404        # hanya saat menit GitHub habis
+gh variable delete CI_RUNNER                                         # saat bulan berganti
+```
+
+Kuota bisa berubah, jadi periksa kedua halaman harga sebelum mengandalkannya.
+[`.claude/CI-RUNNERS.example.md`](.claude/CI-RUNNERS.example.md) berisi uji anggaran yang perlu
+dijalankan sebelum memindahkan job, dan jalan keluar bila sebuah pool hilang.
+
 ### Langkah 3: Deployment
 
 `ci-cd.yml` tidak membangun apa pun. Saat pull request ke `prod` **di-merge**, ia memanggil webhook
-platform deployment Anda lewat `.github/scripts/trigger-deploy.sh`, dan platform itu membangun dari
-git. Pull request yang ditutup tanpa merge, dan push langsung ke `prod`, tidak men-deploy apa pun.
-Bila platform Anda justru menarik image yang sudah dibangun dari registry, tambahkan sendiri job
-build-and-push itu; template ini tidak mengasumsikannya.
+platform deployment Anda lewat reusable workflow deploy-webhook milik agent-config-kit, dan platform
+itu membangun dari git. Pull request yang ditutup tanpa merge, dan push langsung ke `prod`, tidak
+men-deploy apa pun. Bila platform Anda justru menarik image yang sudah dibangun dari registry,
+tambahkan sendiri job build-and-push itu; template ini tidak mengasumsikannya.
 
 ### Langkah 4: Dependency review, code scanning, dan secret scanning
 
@@ -1243,7 +1398,7 @@ protection, secret scanning, dan push protection semuanya menjadi gratis.
 □ Branch default diset ke dev
 □ Squash merging dimatikan                             ← command merge memakai merge commit
 □ Secret:   DEPLOY_WEBHOOK_URL           (atau hapus job deploy)
-□ Secret:   DEEPSEEK_CODE_REVIEW_TOKEN   (atau hapus deepseek-review.yml)
+□ Secret:   DEEPSEEK_API_KEY             (atau hapus deepseek-review.yml)
 □ Variabel: CI_RUNNER                    (atau biarkan kosong: ubuntu-latest)
 □ Variabel: CI_RUNNER_FAST               (opsional: pool untuk quality gate)
 □ Variabel: CODE_SECURITY=true           (hanya repo privat dengan Code Security)
@@ -1299,8 +1454,8 @@ yang menganggur lebih cepat:
 
 | Apa | Biaya |
 | --- | --- |
-| Konteks yang dimuat setiap sesi | 13.114 byte: `CLAUDE.md` (8.836) dan `common/working-agreements.md` (4.278); `ai-config.sh` gagal di atas 15.000 |
-| Aturan yang hanya dimuat untuk file yang cocok | 11 file, total 39.715 byte, masing-masing hanya saat Claude mengerjakan file yang disebutnya |
+| Konteks yang dimuat setiap sesi | 13.487 byte: `CLAUDE.md` (8.931) dan `common/working-agreements.md` (4.556); `ai-config.sh` gagal di atas 15.000 |
+| Aturan yang hanya dimuat untuk file yang cocok | 12 file, total 42.375 byte, masing-masing hanya saat Claude mengerjakan file yang disebutnya |
 | Deskripsi command dan agen yang didaftar Claude Code | 2.982 byte untuk 15 command dan reviewer |
 | `safety-check.sh` untuk satu perintah | sekitar 165 ms: `git status`, force-push yang ditolak, dan test run dengan pipe sama saja (140 ms sebelum aturan skrip guard, yang menambah sekitar 17%; versi lama dan baru dijalankan berdampingan) |
 | `db-guard.sh`, `mcp-guard.sh`, `migration-guard.sh` | sekitar 85 sampai 105 ms masing-masing |
@@ -1309,6 +1464,8 @@ yang menganggur lebih cepat:
 | `hook-probes.sh` | 2.333 probe dalam 9 menit 17 detik |
 | Pre-commit | kode yang di-stage menjalankan setiap gate kecuali probe hook; probe itu hanya berjalan bila file hook di-stage |
 | CI | hanya pada pull request: tidak ada saat push, tidak ada yang terjadwal; `workflows-lint` hanya bila `.github/**` berubah |
+| Menit CI | gratis dan tidak diukur di repositori publik; 2.000 sebulan di paket Free GitHub untuk repositori privat. Setiap job dibulatkan ke atas menjadi satu menit penuh, jadi hanya gate yang memblokir merge yang layak mendapat pool cepat |
+| Pool gratis kedua | runner pihak ketiga seperti Blacksmith menambah menit gratisnya sendiri (3.000 sebulan) lewat `CI_RUNNER_FAST` dan `CI_RUNNER` ([Langkah 2](#langkah-2-variabel-repositori-bukan-secret)) |
 
 Hook pada event yang sama berjalan berdampingan, dan pemanggilan `Bash` hanya diperiksa oleh
 `safety-check.sh`, jadi sebuah perintah shell menunggu satu hook, bukan empat.
@@ -1317,15 +1474,16 @@ Hook pada event yang sama berjalan berdampingan, dan pemanggilan `Bash` hanya di
 
 Tidak ada yang wajib. Setiap bagian menurun menjadi "hapus file ini", bukan merusak bagian lain.
 
-| Untuk                      | Anda butuh                                                                       |
-| :------------------------- | :------------------------------------------------------------------------------- |
-| Hook, command, subagen     | Claude Code; bash 3.2 atau lebih baru, git, dan python3 3.8+ (jq opsional)       |
-| Gate                       | Bun, Node.js 20+, gitleaks, uv untuk pemindaian skill, dan script di SETUP §6    |
-| `/merge-pr` dan `/promote` | `gh` yang sudah login: `scripts/ops/pr-ready.sh` membaca pull request lewat `gh` |
-| Sandbox di Linux dan WSL2  | `bubblewrap` dan `socat` (macOS tidak butuh apa-apa)                             |
-| Pemeriksaan drift spec     | Spec API yang di-commit dan script yang men-generate ulang spec itu              |
-| Migration guard            | Folder migration; cantumkan milik Anda di `migrationsDirs` bila bukan default    |
-| Server MCP                 | Env var yang disebut di `.mcp.json`; hapus server yang tidak Anda pakai          |
+| Untuk                      | Anda butuh                                                                                        |
+| :------------------------- | :------------------------------------------------------------------------------------------------ |
+| Hook, command, subagen     | Claude Code; bash 3.2 atau lebih baru, git, dan python3 3.8+ (jq opsional)                        |
+| Gate                       | Bun, Node.js 20+, gitleaks, uv untuk pemindaian skill, dan script di SETUP §6                     |
+| `/merge-pr` dan `/promote` | `gh` yang sudah login: `scripts/ops/pr-ready.sh` membaca pull request lewat `gh`                  |
+| Sandbox di Linux dan WSL2  | `bubblewrap` dan `socat` (macOS tidak butuh apa-apa)                                              |
+| Pemeriksaan drift spec     | Spec API yang di-commit dan script yang men-generate ulang spec itu                               |
+| Kontrak payload (opsional) | Modul yang disalin dari template ini, `openapi.json` yang di-commit, dan `openssl` untuk kuncinya |
+| Migration guard            | Folder migration; cantumkan milik Anda di `migrationsDirs` bila bukan default                     |
+| Server MCP                 | Env var yang disebut di `.mcp.json`; hapus server yang tidak Anda pakai                           |
 
 ## Upgrade dan uninstall
 
@@ -1438,7 +1596,7 @@ paths:
 - Every job name is a constant in `src/lib/constants/queues.ts`; never retype it.
 ```
 
-`bash scripts/check/ai-config.sh` tetap melaporkan `Always-loaded context: 13114 bytes`. Aturan
+`bash scripts/check/ai-config.sh` tetap melaporkan `Always-loaded context: 13487 bytes`. Aturan
 tanpa `paths:` dimuat di setiap sesi dan dihitung terhadap anggaran 15.000 byte. Tulis aturannya
 dalam bahasa Inggris, seperti aturan lain di repo ini.
 
@@ -1595,6 +1753,10 @@ Aturan, gate, dan skripnya portabel. Pemasangan hook di `.claude/settings.json` 
 - **Salinan (mirror)**: salinan hasil generate dari sebuah command di `.claude/commands/` atau
   `.agent/workflows/`.
 - **Strip**: melucuti lapisan ini dari `prod` setelah promosi.
+- **Envelope**: body request atau response yang disegel menurut kontrak payload, terikat pada
+  route, method atau status, kunci, dan waktunya.
+- **Registry endpoint**: satu-satunya daftar route beserta kebijakan enkripsinya, di
+  `src/lib/endpoints/`.
 
 Repositori plugin menyimpan glosarium lengkapnya, beserta kata-kata yang sebaiknya dihindari, di
 [CONTEXT.md](https://github.com/adhibuchori/agent-config-kit/blob/main/CONTEXT.md).
@@ -1603,8 +1765,9 @@ Repositori plugin menyimpan glosarium lengkapnya, beserta kata-kata yang sebaikn
 
 Sengaja tidak disertakan:
 
-- **Tidak ada kode aplikasi**: tidak ada `src/`, skema, migration, `package.json`, lockfile, atau
-  `Dockerfile`. Ini konfigurasi, bukan proyek awal.
+- **Tidak ada kode aplikasi**: tidak ada aplikasi, skema, migration, `package.json`, lockfile, atau
+  `Dockerfile`. Satu-satunya isi `src/` adalah modul payload yang opsional. Ini konfigurasi, bukan
+  proyek awal.
 - **Tidak ada rahasia, dan tidak ada yang dibutuhkan.** Setiap kredensial di `.mcp.json` adalah
   referensi environment variable.
 - **Tidak ada skill dan tidak ada salinan `.agents/skills/`.** Skill desain tidak punya pekerjaan
@@ -1634,16 +1797,17 @@ be-agent-config/
 │
 ├── .claude/
 │   ├── settings.json            Pemasangan hook, daftar izin allow, ask, dan deny, sandbox
-│   ├── rules/                   12 file · common, typescript, backend · 11 dengan cakupan path
+│   ├── rules/                   13 file · common, typescript, backend · 12 dengan cakupan path
 │   ├── docs/                    code-review-checklist.md, dibaca bila perlu
 │   ├── agents/                  agents-reviewer.md + INDEX.md
-│   ├── anti-patterns/           7 jebakan terdokumentasi + INDEX.md
+│   ├── anti-patterns/           12 jebakan terdokumentasi + INDEX.md
 │   ├── hooks/                   8 hook + lib.sh + README.md; migration-guard.sh yang terpenting
 │   ├── mcp/                     3 server sesuai kebutuhan, dimuat dengan claude --mcp-config
 │   ├── commands/                15 slash command + INDEX.md (di-generate)
 │   ├── agent-config.example.json
 │   │                            Pengaturan hook per repo; salin hanya key yang Anda ubah
 │   ├── test-preload.example.ts  Satu-satunya titik mocking untuk tier unit
+│   ├── PAYLOAD-CONTRACT.md      Kontrak payload yang opsional, dibaca bila perlu
 │   └── *.example.md             5 dokumen bersama, dibaca bila perlu; salin dan isi, atau hapus
 │
 ├── .agent/workflows/            Salinan command untuk tool kedua (di-generate)
@@ -1654,6 +1818,12 @@ be-agent-config/
 ├── .oxfmtrc.json · .oxlintrc.json · .oxlintignore
 ├── .gitleaks.toml · .gitignore · .dockerignore · .skillspector-baseline.yaml
 ├── .markdownlint-cli2.jsonc     Pengaturan lint untuk dokumen repositori ini sendiri
+├── payload.config.json          Saklar, pengecualian, dan peer kontrak payload (opsional)
+│
+├── src/                         Modul payload yang opsional, beserta tesnya
+│   ├── lib/payload/             Cipher, key ring, kesepakatan kunci, saklar, pencocok endpoint
+│   ├── lib/endpoints/           Registry endpoint: separuh hasil generate + separuh tulisan tangan
+│   └── middlewares/             payload.middleware.ts: membuka request, menyegel response
 │
 ├── scripts/
 │   ├── check/                   gates.sh + gates.list: runner gate lokal dan daftarnya
@@ -1668,6 +1838,11 @@ be-agent-config/
 │   │                            ci-env.sh: tes unit hanya dengan variabel CI
 │   │                            module-mocks.ts · constants.ts + constants.config.json
 │   │                            folder-shape.mjs · double-assertion.sh
+│   │                            dockerfile.ts: image membangun apa yang divalidasi gate
+│   │                            openapi.ts: spec bisa dibangun dan sama dengan openapi.json
+│   │                            endpoints.ts · crypto-interop.ts + payload-vectors.json: payload
+│   ├── generate/                openapi.ts (spec:export) · endpoints.ts (registry payload)
+│   ├── lib/                     openapi-document.ts · openapi-endpoints.ts · source-scan.ts
 │   ├── ops/                     unlock.sh: pembukaan kunci sementara oleh Anda (env, db)
 │   │                            pr-ready.sh: satu tabel baca-saja, bisakah PR ini di-merge?
 │   ├── env/                     show.sh · set.sh · envfile.py: baca tersamar, tulis saat terbuka
@@ -1689,7 +1864,7 @@ be-agent-config/
     └── assets/                  Ilustrasi di halaman ini, versi terang dan gelap
 ```
 
-**168 file. Tanpa kode aplikasi.**
+**212 file. Tanpa kode aplikasi: satu-satunya sumber adalah modul payload yang opsional.**
 
 </details>
 

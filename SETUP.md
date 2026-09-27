@@ -74,7 +74,7 @@ It skips the anti-patterns, whose angle brackets are examples, and the generated
 It still prints command syntax (`<file>`, `<paths>`, `<sha>`), TypeScript generics in the code
 samples (`Promise<HealthResponse>`) and the pull-request template's `<details>` and `<summary>`
 tags; leave those. Two placeholders sit outside that search, in `.github/`: `@your-github-handle`
-in `CODEOWNERS`, and the `<...>` repository description in the review workflow's `sys-prompt`
+in `CODEOWNERS`, and the `<...>` repository description in the review workflow's `instructions`
 ([§4](#ai-code-review-on-pull-requests-deepseek)).
 
 | File                                         | What to replace                                                                                                                                                                                                                                                              |
@@ -247,24 +247,27 @@ excludes.
 
 ### AI code review on pull requests: DeepSeek
 
-`.github/workflows/deepseek-review.yml` posts an AI review comment on pull requests into `dev`,
-using [`hustcer/deepseek-review`](https://github.com/hustcer/deepseek-review), which accepts any
-OpenAI-compatible endpoint. Add a `DEEPSEEK_CODE_REVIEW_TOKEN` secret and it runs. Replace the one
-`<...>` line in its `sys-prompt` with a description of this repo first.
+`.github/workflows/deepseek-review.yml` posts a DeepSeek review of each pull request into `dev` as
+one comment, updated on later runs. It calls agent-config-kit's reusable `deepseek-review` workflow,
+pinned to one commit. Add a `DEEPSEEK_API_KEY` secret and it runs; without it the job passes and
+sends nothing. Replace the one `<...>` line in its `instructions` with a description of this repo
+first. The diff is capped at 100 KB and the answer at 16,384 tokens: a review costs a cent or two,
+at most about ten US cents.
 
-The prompt reviews against `AGENTS.md` §B layer boundaries, §C the error envelope, §D database
+The instructions review against `AGENTS.md` §B layer boundaries, §C the error envelope, §D database
 rules, §F security, §G code quality, §H query performance and §I runtime hardening, and it skips
 generated migrations and the exported spec. Three things to keep if you edit it:
 
 - **Never add `actions/checkout`, and never switch to `pull_request_target`.** The workflow runs on
   `pull_request` (a branch of this repo gets the secret; a fork's run is skipped) and on
   `issue_comment` for `/ask-deepseek`, which runs from the default branch with the secret in scope.
-  That path is safe only because nothing checks out or runs the pull request's code.
+  That path is safe only because nothing checks out or runs the pull request's code, and the
+  reusable workflow skips a fork's pull request on every event.
 - **`dev` only, and no `synchronize`.** A `dev → prod` diff re-adds the whole AI layer the strip
-  removed and exceeds the provider's diff limit. Without `synchronize`, a push does not stack
-  another review; comment `/ask-deepseek` to re-run it.
+  removed. Each review costs tokens, so a push does not start one; comment `/ask-deepseek` to re-run
+  it, and the one comment is updated.
 - **Do not tell it to skip your security checks unless they run on `dev`.** The quality gate runs
-  on pull requests into `dev` here, so the prompt can say the audit and secret scan ran.
+  on pull requests into `dev` here, so the instructions can say the audit and secret scan ran.
 
 ---
 
@@ -420,9 +423,14 @@ checks and more on every pull request. Both call package scripts, so those must 
     "check:constants": "bun scripts/check/constants.ts",
     "check:folder-shape": "node scripts/check/folder-shape.mjs",
     "check:coverage-policy": "node scripts/check/coverage-policy.mjs",
+    "check:dockerfile": "bun scripts/check/dockerfile.ts",
+    "check:openapi": "bun scripts/check/openapi.ts",
+    "check:endpoints": "bun scripts/check/endpoints.ts",
+    "check:crypto-interop": "bun scripts/check/crypto-interop.ts",
+    "generate:endpoints": "bun scripts/generate/endpoints.ts",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "bun run src/db/client/migrate.ts",
-    "spec:export": "<regenerate the committed API spec>",
+    "spec:export": "bun scripts/generate/openapi.ts",
     "unlock": "bash scripts/ops/unlock.sh",
     "prepare": "husky"
   }
@@ -436,6 +444,12 @@ pre-commit hook on `bun install`. §0 lists the tools outside `package.json`.
 Keep the names: `gates.list`, the quality gate, `coverage-policy.mjs` (which checks that
 `test:coverage` runs `coverage-files.mjs`) and `@format` (which reads the scope of `format` and
 `fl:ci`) all call these scripts by name. `gates.sh` reads the package manager from the lockfile.
+
+**The payload contract is an optional module.** `check:endpoints`, `check:crypto-interop` and
+`generate:endpoints` belong to the encrypted request and response contract in
+`.claude/PAYLOAD-CONTRACT.md`. A repo that does not adopt it deletes those three scripts, their two
+`gates.list` lines and the files the contract's last section lists, together. The pull-request
+gate runs the two checks exactly when `gates.list` lists them.
 
 Three checks start empty and refuse to pass on nothing, so fill them before your first commit of
 code:
@@ -556,6 +570,10 @@ it.**
 | `strip-ai.sh`        | Removes those paths on the production branch                                    |
 | `verify-strip.sh`    | Asserts they are gone from `prod` **and still present on `dev`**                |
 | `back-merge-prod.sh` | Merges `prod` back into `dev` so the branches do not diverge                    |
+
+In CI, `strip-ai-on-pr.yml` runs agent-config-kit's reusable strip workflow instead of these
+scripts: its default list plus `promote-deploy-logs` is exactly `STRIP_PATHS`, and its checkout
+keeps no token. `/promote-deploy` runs the scripts by hand. Change both lists together.
 
 Three things that are not obvious:
 
